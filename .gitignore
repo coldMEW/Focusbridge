@@ -34,3 +34,7 @@ Thumbs.db
 *.jks
 .env
 .env.local
+
+# OMC scratch
+.omc/
+.claude/
