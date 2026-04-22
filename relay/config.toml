@@ -1,0 +1,7 @@
+bind = "0.0.0.0:8443"
+tls_cert_path = "certs/server.crt"
+tls_key_path = "certs/server.key"
+ping_interval_secs = 30
+pairing_ttl_secs = 300
+max_message_bytes = 65536
+rate_limit_per_min = 120
