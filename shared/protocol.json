@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FocusBridge Wire Protocol v1",
+  "$defs": {
+    "Envelope": {
+      "type": "object",
+      "required": ["v", "type", "ts", "payload"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "type": "string" },
+        "ts": { "type": "integer" },
+        "payload": { "type": "object" }
+      }
+    },
+    "Auth": {
+      "type": "object",
+      "required": ["pairingKey", "deviceId", "deviceName", "role"],
+      "properties": {
+        "pairingKey": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "role": { "enum": ["android", "desktop"] }
+      }
+    },
+    "AuthOk": {
+      "type": "object",
+      "required": ["serverTime", "config"],
+      "properties": {
+        "serverTime": { "type": "integer" },
+        "config": {
+          "type": "object",
+          "properties": {
+            "heartbeatInterval": { "type": "integer" },
+            "maxMessageSize": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "AuthFailed": {
+      "type": "object",
+      "required": ["reason"],
+      "properties": { "reason": { "type": "string" } }
+    },
+    "Notification": {
+      "type": "object",
+      "required": ["id", "appName", "packageName", "sender", "message", "timestamp", "priority"],
+      "properties": {
+        "id": { "type": "string" },
+        "appName": { "type": "string" },
+        "packageName": { "type": "string" },
+        "sender": { "type": ["string", "null"] },
+        "message": { "type": ["string", "null"] },
+        "timestamp": { "type": "integer" },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "contentHidden": { "type": "boolean" },
+        "batchId": { "type": ["string", "null"] }
+      }
+    },
+    "NotificationBatch": {
+      "type": "object",
+      "required": ["batchId", "appName", "packageName", "sender", "count", "lastMessage", "timestamp", "firstTimestamp", "notifications", "priority"],
+      "properties": {
+        "batchId": { "type": "string" },
+        "appName": { "type": "string" },
+        "packageName": { "type": "string" },
+        "sender": { "type": "string" },
+        "count": { "type": "integer" },
+        "lastMessage": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "firstTimestamp": { "type": "integer" },
+        "notifications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "message", "timestamp"],
+            "properties": {
+              "id": { "type": "string" },
+              "message": { "type": "string" },
+              "timestamp": { "type": "integer" }
+            }
+          }
+        },
+        "priority": { "type": "integer" },
+        "contentHidden": { "type": "boolean" }
+      }
+    },
+    "Dismissal": {
+      "type": "object",
+      "required": ["id"],
+      "properties": { "id": { "type": "string" } }
+    },
+    "DismissalBatch": {
+      "type": "object",
+      "required": ["ids"],
+      "properties": {
+        "ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Ping": { "type": "object" },
+    "Pong": {
+      "type": "object",
+      "properties": { "serverTime": { "type": "integer" } }
+    },
+    "Status": {
+      "type": "object",
+      "required": ["studyModeEnabled", "notificationsCaptured", "notificationsSent", "uptime"],
+      "properties": {
+        "batteryLevel": { "type": "integer" },
+        "wifiConnected": { "type": "boolean" },
+        "studyModeEnabled": { "type": "boolean" },
+        "notificationsCaptured": { "type": "integer" },
+        "notificationsSent": { "type": "integer" },
+        "uptime": { "type": "integer" }
+      }
+    },
+    "DesktopAction": {
+      "type": "object",
+      "required": ["action", "notificationId"],
+      "properties": {
+        "action": { "enum": ["MARK_IMPORTANT", "REQUEST_STUDY_MODE_OFF", "REQUEST_STUDY_MODE_ON"] },
+        "notificationId": { "type": "string" },
+        "studyModeOverride": { "type": "boolean" }
+      }
+    },
+    "Unpair": {
+      "type": "object",
+      "required": ["deviceId"],
+      "properties": { "deviceId": { "type": "string" } }
+    }
+  },
+  "messageTypes": [
+    "AUTH",
+    "AUTH_OK",
+    "AUTH_FAILED",
+    "NOTIFICATION",
+    "NOTIFICATION_BATCH",
+    "DISMISSAL",
+    "DISMISSAL_BATCH",
+    "PING",
+    "PONG",
+    "STATUS",
+    "DESKTOP_ACTION",
+    "UNPAIR"
+  ]
+}

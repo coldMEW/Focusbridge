@@ -1,0 +1,36 @@
+# Node
+node_modules/
+.pnp.*
+.yarn/*
+.pnpm-store/
+dist/
+dist-ssr/
+
+# Rust
+target/
+Cargo.lock
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+android/.cxx/
+*.iml
+*.hprof
+
+# Tauri
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.keystore
+*.jks
+.env
+.env.local
