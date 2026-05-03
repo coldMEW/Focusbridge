@@ -23,6 +23,8 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - QR pairing now uses a LAN IP discovery attempt instead of always returning `127.0.0.1`.
 - Added Android MVP scaffold for notification capture, local persistence, basic pairing input, and WebSocket sync.
 - Installed Gradle 8.7 in `C:\tmp\gradle-8.7`, generated `android/gradlew(.bat)`, installed Android SDK command-line tools/platform 34/build-tools 34.0.0/platform-tools in `C:\tmp\android-sdk`, and configured ignored `android/local.properties`.
+- Added GitHub Actions for Android, desktop, and relay CI.
+- Fixed initial CI failures by committing Rust lockfiles, making `android/gradlew` executable for Linux runners, using portable Rust `stable` toolchains, updating GitHub Actions to current Node-24-compatible major versions, and disabling desktop matrix fail-fast.
 
 ## Known Gaps
 
@@ -30,11 +32,11 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Desktop notification list loads live events, but it does not yet hydrate existing SQLite notifications on launch.
 - Android QR scanning is currently manual payload paste; CameraX/ZXing camera scanning still needs UI integration.
 - Android certificate pinning is represented by `CertificateManager`, but the WebSocket client is plain WS until desktop WSS hardening is done.
-- CI workflows are not added yet.
 - Local verification previously hit environment permission blockers: Cargo could not open stale `target/.cargo-lock`, and Vitest/esbuild could not spawn in the sandbox.
 - Android `./gradlew.bat test lint assembleDebug` passes locally with the installed SDK.
 - Desktop `pnpm tsc --noEmit`, `pnpm vitest run`, `pnpm build`, and Rust `cargo check` pass locally. Vite/Vitest need elevated execution in this environment because esbuild spawn is blocked by the sandbox.
 - Relay `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass locally.
+- After switching Rust toolchain files to portable `stable`, this Windows shell may select `stable-x86_64-pc-windows-msvc`; relay compile gates fail locally if Git's Unix `link.exe` shadows the Visual Studio linker. Use `rustup run stable-x86_64-pc-windows-gnu cargo ...` for relay checks on this PC, or repair the MSVC build tools/PATH later.
 
 ## Next Best Tasks
 

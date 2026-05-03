@@ -9,6 +9,8 @@ dist-ssr/
 # Rust
 target/
 Cargo.lock
+!relay/Cargo.lock
+!desktop/Cargo.lock
 
 # Android
 android/.gradle/
