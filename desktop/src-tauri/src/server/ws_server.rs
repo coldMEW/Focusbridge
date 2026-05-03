@@ -1,4 +1,5 @@
 use crate::db::store;
+use crate::desktop_notifications;
 use crate::state::AppState;
 use anyhow::{Context, Result};
 use focusbridge_core::handler::{handle_envelope, IncomingDecision};
@@ -81,13 +82,15 @@ async fn handle_connection(
             }
             IncomingDecision::StoreNotification(payload) => {
                 let row = store::upsert_notification(&state.db_path, &payload)?;
-                app.emit("focusbridge://notification", row)?;
+                app.emit("focusbridge://notification", &row)?;
+                desktop_notifications::show_phone_notification(&app, &row);
             }
             IncomingDecision::StoreBatch(payload) => {
                 if let Some(items) = payload.get("notifications").and_then(|v| v.as_array()) {
                     for item in items {
                         let row = store::upsert_notification(&state.db_path, item)?;
-                        app.emit("focusbridge://notification", row)?;
+                        app.emit("focusbridge://notification", &row)?;
+                        desktop_notifications::show_phone_notification(&app, &row);
                     }
                 }
             }

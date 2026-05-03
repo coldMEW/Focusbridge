@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod db;
+pub mod desktop_notifications;
 pub mod pairing;
 pub mod priority;
 pub mod server;
@@ -9,7 +10,7 @@ pub mod tray;
 
 use crate::state::AppState;
 use anyhow::Context;
-use tauri::Manager;
+use tauri::{Emitter, Manager, WindowEvent};
 use tracing::info;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -21,6 +22,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:focusbridge.db", db::migrations::list())
@@ -55,7 +57,30 @@ pub fn run() {
             commands::notification_cmd::list_notifications,
             commands::notification_cmd::mark_important,
             commands::notification_cmd::mark_ignored,
+            minimize_to_tray,
+            quit_app,
         ])
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit("focusbridge://close-requested", ());
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("tauri runtime error");
+}
+
+#[tauri::command]
+fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
 }

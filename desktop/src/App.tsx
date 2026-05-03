@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import NotificationList from "./components/NotificationList";
@@ -42,6 +42,7 @@ function fromNative(row: NativeNotificationRow): Notification {
 }
 
 export default function App() {
+  const [closePromptOpen, setClosePromptOpen] = useState(false);
   const { state } = useConnection();
   const activeFilter = useSettingsStore((s) => s.activeFilter);
   const setConnectionState = useConnectionStore((s) => s.setState);
@@ -66,6 +67,9 @@ export default function App() {
       }),
       listen<string>("focusbridge://dismissal", (event) => {
         remove(event.payload);
+      }),
+      listen("focusbridge://close-requested", () => {
+        setClosePromptOpen(true);
       }),
     ]);
 
@@ -152,6 +156,48 @@ export default function App() {
           </aside>
         </main>
       </div>
+      {closePromptOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#17221e]/45 p-6 backdrop-blur-sm">
+          <section className="w-full max-w-md rounded-[30px] border border-border-subtle bg-bg-primary p-6 shadow-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-study">
+              Keep FocusBridge running?
+            </p>
+            <h2 className="mt-3 text-2xl font-semibold tracking-[-0.035em]">
+              Closing stops phone notification sync.
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-text-secondary">
+              Run in tray to keep receiving phone notifications in the background, or quit fully if
+              you want to stop FocusBridge for now.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                onClick={() => {
+                  setClosePromptOpen(false);
+                  void invoke("minimize_to_tray");
+                }}
+                className="rounded-full bg-text-primary px-4 py-3 text-sm font-semibold text-bg-primary transition hover:bg-accent-study"
+              >
+                Run in tray
+              </button>
+              <button
+                onClick={() => {
+                  setClosePromptOpen(false);
+                  void invoke("quit_app");
+                }}
+                className="rounded-full border border-border-subtle px-4 py-3 text-sm font-semibold text-text-secondary transition hover:border-border-hover hover:text-text-primary"
+              >
+                Quit FocusBridge
+              </button>
+            </div>
+            <button
+              onClick={() => setClosePromptOpen(false)}
+              className="mt-4 w-full text-center text-xs font-semibold uppercase tracking-[0.18em] text-text-muted transition hover:text-text-primary"
+            >
+              Cancel
+            </button>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

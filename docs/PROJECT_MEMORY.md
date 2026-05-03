@@ -17,6 +17,8 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 - Current local slice fixes the first-run Android basics: responsive compact layout, Android 13+ notification runtime prompt, notification-listener status card, CameraX/ZXing QR scanner with camera permission request, manual pairing fallback that starts sync, cleartext local WS permission for MVP LAN pairing, and proper Material icons/buttons across APK navigation and setup actions.
 - Desktop local pairing now sends explicit `AUTH_OK` / `AUTH_FAILED` WebSocket messages so Android marks the device green only after the desktop accepts the pairing key.
+- Desktop now has native OS notification popups for phone notifications when the main window is hidden, minimized, or unfocused; masked notifications stay masked in the popup body.
+- Desktop close behavior is now guarded: clicking the window X opens an in-app prompt with `Run in tray`, `Quit FocusBridge`, and `Cancel`, so background sync is preserved unless the user intentionally quits.
 - Android notification processing now reads user-configurable privacy/filter rules from local config: Masked Peek Mode, blocked keywords, priority keywords, and favorite contacts.
 - Desktop notification cards now support Masked Peek Mode: hidden notifications show a masked chip until hover, focus, or click reveals the message.
 - Latest local APK output: `android/app/build/outputs/apk/debug/app-debug.apk`.
@@ -56,7 +58,7 @@ Recent connectivity progress:
 ## Next Best Tasks
 
 1. Install the debug APK on a physical Android phone, launch desktop Tauri, scan the QR, and record real pairing/notification delivery results in `docs/integration-log.md`.
-2. Commit and push the first-run pairing/privacy/UI polish slice after final review.
+2. Verify native Windows notification toast behavior and close-to-tray behavior manually in a running Tauri desktop session.
 3. Harden local desktop transport from WS to WSS with persisted certs and Android pinning.
 4. Add desktop-to-phone action handling for important/ignored/study-mode toggles.
 5. Add relay registration/client mode in desktop so different-Wi-Fi pairing becomes product-grade rather than local-only plus relay scaffold.
