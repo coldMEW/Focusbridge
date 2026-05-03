@@ -7,6 +7,7 @@ interface NotificationState {
   remove: (id: string) => void;
   setStatus: (id: string, status: NotificationStatus) => void;
   clear: () => void;
+  clearOlderThan: (cutoffMs: number) => void;
   replaceAll: (items: Notification[]) => void;
 }
 
@@ -27,5 +28,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       items: s.items.map((it) => (it.id === id ? { ...it, status } : it)),
     })),
   clear: () => set({ items: [] }),
+  clearOlderThan: (cutoffMs) =>
+    set((s) => ({ items: s.items.filter((it) => it.receivedAt >= cutoffMs) })),
   replaceAll: (items) => set({ items }),
 }));

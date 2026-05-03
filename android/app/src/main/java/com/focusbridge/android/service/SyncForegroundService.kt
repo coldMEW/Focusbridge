@@ -24,7 +24,11 @@ class SyncForegroundService : Service() {
         super.onCreate()
         ensureChannel()
         startForeground(42, notification())
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         scope.launch { syncEngine.connectActivePairing() }
+        return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

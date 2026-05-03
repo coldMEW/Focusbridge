@@ -11,16 +11,43 @@ interface QrData {
 export default function PairingQR({ compact = false }: { compact?: boolean }) {
   const [qr, setQr] = useState<QrData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
+  const refreshQr = () => {
     let alive = true;
+    setRefreshing(true);
+    setError(null);
     invoke<QrData>("generate_pairing_qr")
       .then((d) => {
         if (alive) setQr(d);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => {
+        if (alive) setError(String(e));
+      })
+      .finally(() => {
+        if (alive) setRefreshing(false);
+      });
     return () => {
       alive = false;
+    };
+  };
+
+  useEffect(() => {
+    const dispose = refreshQr();
+    const refreshIfStale = () => {
+      setQr((current) => {
+        if (!current || current.expiresAt - Date.now() < 60_000) {
+          refreshQr();
+        }
+        return current;
+      });
+    };
+    window.addEventListener("focus", refreshQr);
+    const timer = window.setInterval(refreshIfStale, 15_000);
+    return () => {
+      dispose();
+      window.removeEventListener("focus", refreshQr);
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -37,7 +64,8 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
             {compact ? "Add another phone" : "Pair your Android"}
           </h2>
           <p className="mt-2 text-sm leading-5 text-text-secondary">
-            Scan this local QR code from the Android app while both devices share Wi-Fi.
+            Scan this local QR code from the Android app. If Wi-Fi or hotspot changes, tap refresh
+            before scanning.
           </p>
         </div>
         <ConnectionStatus />
@@ -53,6 +81,13 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
               className={compact ? "h-36 w-36" : "h-56 w-56"}
             />
           </div>
+          <button
+            onClick={refreshQr}
+            disabled={refreshing}
+            className="rounded-full bg-text-primary px-4 py-2 text-sm font-semibold text-bg-primary transition hover:bg-accent-study disabled:cursor-wait disabled:opacity-60"
+          >
+            {refreshing ? "Refreshing QR..." : "Refresh QR / network"}
+          </button>
           <div className="rounded-3xl bg-bg-secondary/80 p-3">
             <div className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
               Manual payload

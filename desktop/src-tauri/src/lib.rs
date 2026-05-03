@@ -57,6 +57,7 @@ pub fn run() {
             commands::notification_cmd::list_notifications,
             commands::notification_cmd::mark_important,
             commands::notification_cmd::mark_ignored,
+            commands::notification_cmd::clear_notifications_older_than,
             minimize_to_tray,
             quit_app,
         ])

@@ -19,3 +19,11 @@ pub fn mark_important(id: String, state: tauri::State<'_, AppState>) -> Result<(
 pub fn mark_ignored(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     store::mark_status(&state.db_path, &id, "IGNORED").map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn clear_notifications_older_than(
+    cutoff_ms: i64,
+    state: tauri::State<'_, AppState>,
+) -> Result<usize, String> {
+    store::clear_notifications_older_than(&state.db_path, cutoff_ms).map_err(|e| e.to_string())
+}

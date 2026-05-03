@@ -4,7 +4,9 @@ use crate::pairing::device_store::PairingSession;
 use crate::pairing::qr_generator::{make_qr, QrOutput, QrPayload};
 use crate::state::AppState;
 use rand::RngCore;
-use std::net::UdpSocket;
+use std::collections::BTreeSet;
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -21,14 +23,72 @@ fn random_hex_256() -> String {
     hex::encode(bytes)
 }
 
-fn local_ipv4() -> String {
+fn route_ipv4() -> Option<Ipv4Addr> {
     UdpSocket::bind("0.0.0.0:0")
         .and_then(|socket| {
             socket.connect("8.8.8.8:80")?;
             socket.local_addr()
         })
-        .map(|addr| addr.ip().to_string())
-        .unwrap_or_else(|_| "127.0.0.1".to_string())
+        .ok()
+        .and_then(|addr| match addr.ip() {
+            IpAddr::V4(ip) if is_pairable_ipv4(ip) => Some(ip),
+            _ => None,
+        })
+}
+
+fn is_pairable_ipv4(ip: Ipv4Addr) -> bool {
+    !(ip.is_loopback() || ip.is_link_local() || ip.is_unspecified())
+}
+
+fn parse_ipv4_token(token: &str) -> Option<Ipv4Addr> {
+    let trimmed = token
+        .trim()
+        .trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+    let ip: Ipv4Addr = trimmed.parse().ok()?;
+    is_pairable_ipv4(ip).then_some(ip)
+}
+
+#[cfg(target_os = "windows")]
+fn command_ipv4_candidates() -> Vec<Ipv4Addr> {
+    let Ok(output) = Command::new("ipconfig").output() else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.lines()
+        .filter(|line| line.contains("IPv4"))
+        .filter_map(|line| line.split(':').nth(1))
+        .filter_map(parse_ipv4_token)
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn command_ipv4_candidates() -> Vec<Ipv4Addr> {
+    let output = Command::new("hostname").arg("-I").output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .filter_map(parse_ipv4_token)
+        .collect()
+}
+
+fn local_ipv4_candidates() -> Vec<String> {
+    let mut candidates = BTreeSet::new();
+
+    if let Some(ip) = route_ipv4() {
+        candidates.insert(format!("{ip}:9173"));
+    }
+
+    for ip in command_ipv4_candidates() {
+        candidates.insert(format!("{ip}:9173"));
+    }
+
+    if candidates.is_empty() {
+        candidates.insert("127.0.0.1:9173".to_string());
+    }
+
+    candidates.into_iter().collect()
 }
 
 #[tauri::command]
@@ -36,12 +96,17 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
     let cert = generate_self_signed("focusbridge-desktop").map_err(|e| e.to_string())?;
     let device_id = Uuid::new_v4().to_string();
     let pairing_key = random_hex_256();
-    let endpoint = format!("{}:9173", local_ipv4());
+    let endpoint_candidates = local_ipv4_candidates();
+    let endpoint = endpoint_candidates
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1:9173".to_string());
     let expires_at = now_millis() + 5 * 60 * 1000;
     let payload = QrPayload {
         v: 1,
         mode: "local".into(),
         endpoint: endpoint.clone(),
+        endpoint_candidates,
         relay_url: None,
         device_pair_id: None,
         device_id: device_id.clone(),

@@ -10,6 +10,12 @@ pub struct QrPayload {
     pub v: u32,
     pub mode: String,
     pub endpoint: String,
+    #[serde(
+        rename = "endpointCandidates",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub endpoint_candidates: Vec<String>,
     #[serde(rename = "relayUrl", skip_serializing_if = "Option::is_none")]
     pub relay_url: Option<String>,
     #[serde(rename = "devicePairId", skip_serializing_if = "Option::is_none")]
@@ -55,6 +61,7 @@ mod tests {
             v: 1,
             mode: "local".into(),
             endpoint: "1.2.3.4:9173".into(),
+            endpoint_candidates: vec![],
             relay_url: None,
             device_pair_id: None,
             device_id: "id".into(),
@@ -72,6 +79,7 @@ mod tests {
             v: 1,
             mode: "cloud".into(),
             endpoint: "1.2.3.4:9173".into(),
+            endpoint_candidates: vec!["1.2.3.4:9173".into(), "10.0.0.5:9173".into()],
             relay_url: Some("https://relay.example".into()),
             device_pair_id: Some("pair_123".into()),
             device_id: "id".into(),
@@ -86,6 +94,7 @@ mod tests {
         assert!(payload.contains("\"deviceId\""));
         assert!(payload.contains("\"pairingKey\""));
         assert!(payload.contains("\"certFingerprint\""));
+        assert!(payload.contains("\"endpointCandidates\""));
         assert!(!payload.contains("relay_url"));
     }
 }

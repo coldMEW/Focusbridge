@@ -7,6 +7,7 @@ import StudyModeToggle from "./components/StudyModeToggle";
 import ConnectionStatus from "./components/ConnectionStatus";
 import PairingQR from "./components/PairingQR";
 import SettingsPanel from "./components/SettingsPanel";
+import logo from "./assets/logo.png";
 import { useConnection } from "./hooks/useConnection";
 import { useConnectionStore } from "./stores/connectionStore";
 import { useNotificationStore } from "./stores/notificationStore";
@@ -98,6 +99,11 @@ export default function App() {
       <div className="relative z-10 flex h-full p-4">
         <aside className="glass-panel flex w-[248px] shrink-0 flex-col overflow-hidden rounded-[28px] p-4">
           <div className="mb-7">
+            <img
+              src={logo}
+              alt="FocusBridge logo"
+              className="mb-4 h-14 w-14 rounded-2xl shadow-soft"
+            />
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-accent-study">
               FocusBridge
             </div>

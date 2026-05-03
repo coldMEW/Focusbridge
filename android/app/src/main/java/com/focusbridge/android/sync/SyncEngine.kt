@@ -16,12 +16,15 @@ class SyncEngine @Inject constructor(
 ) {
     suspend fun connectActivePairing() {
         val pairing = pairings.active() ?: return
-        client.connect(pairing)
-        val connected = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-            client.state.first { it == ConnectionState.CONNECTED }
-        } != null
-        if (connected) {
-            flushPending()
+        for (endpoint in pairing.candidateEndpoints()) {
+            client.connect(pairing, endpointOverride = endpoint)
+            val connected = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                client.state.first { it == ConnectionState.CONNECTED }
+            } != null
+            if (connected) {
+                flushPending()
+                return
+            }
         }
     }
 
@@ -36,6 +39,6 @@ class SyncEngine @Inject constructor(
     }
 
     private companion object {
-        const val CONNECT_TIMEOUT_MS = 10_000L
+        const val CONNECT_TIMEOUT_MS = 4_000L
     }
 }

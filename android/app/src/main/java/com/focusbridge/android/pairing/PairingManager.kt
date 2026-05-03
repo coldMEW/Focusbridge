@@ -13,6 +13,7 @@ data class QrPairingPayload(
     val v: Int,
     val mode: String,
     val endpoint: String,
+    val endpointCandidates: List<String> = emptyList(),
     val relayUrl: String? = null,
     val devicePairId: String? = null,
     val deviceId: String,
@@ -28,6 +29,16 @@ data class QrPairingPayload(
         val base = relayUrl.toRelayWebSocketBase()
         val key = URLEncoder.encode(pairingKey, StandardCharsets.UTF_8.name())
         return "$base/ws/$devicePairId?role=phone&pairing_key=$key"
+    }
+
+    fun syncEndpointCandidates(): List<String> {
+        if (mode.uppercase() == "CLOUD") return listOf(syncEndpoint())
+        return sequenceOf(endpoint)
+            .plus(endpointCandidates.asSequence())
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
     }
 }
 
@@ -51,6 +62,7 @@ class PairingManager @Inject constructor(
         val pairing = PairingEntity(
             deviceId = payload.deviceId,
             endpoint = payload.syncEndpoint(),
+            endpointCandidates = payload.syncEndpointCandidates().joinToString("|"),
             pairingKey = payload.pairingKey,
             certFingerprint = payload.certFingerprint,
             mode = payload.mode.uppercase(),

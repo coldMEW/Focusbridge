@@ -19,6 +19,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -82,6 +83,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.res.painterResource
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -262,7 +264,10 @@ private fun FocusBridgeScreen(
                                 scope.launch { configRepository.set("blocked_keywords", value) }
                             },
                         )
-                        AppTab.Log -> NotificationLog(items = items)
+                        AppTab.Log -> NotificationLog(
+                            items = items,
+                            clearOlderThan = { cutoffMs -> notifications.clearOlderThan(cutoffMs) },
+                        )
                     }
                 }
 
@@ -316,11 +321,20 @@ private fun Header(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        "FocusBridge",
-                        style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Black,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Image(
+                            painter = painterResource(R.drawable.app_logo),
+                            contentDescription = "FocusBridge logo",
+                            modifier = Modifier
+                                .size(if (compact) 38.dp else 46.dp)
+                                .clip(RoundedCornerShape(14.dp)),
+                        )
+                        Text(
+                            "FocusBridge",
+                            style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Black,
+                        )
+                    }
                     Text(
                         "See everything. Open nothing.",
                         color = Color(0xFF61706A),
@@ -423,7 +437,7 @@ private fun HomeTab(
                     else -> "Desktop saved, reconnect needed"
                 },
                 body = activePairing?.endpoint ?: "Open desktop FocusBridge, show Pairing, then scan the QR code.",
-                primary = if (connectionState == ConnectionState.CONNECTED) "Connected" else "Start sync",
+                primary = if (connectionState == ConnectionState.CONNECTED) "Connected" else "Retry sync",
                 secondary = "Notification access",
                 onPrimary = startSync,
                 onSecondary = openNotificationAccess,
@@ -726,8 +740,61 @@ private fun RulesTab(
 }
 
 @Composable
-private fun NotificationLog(items: List<NotificationEntity>) {
+private fun NotificationLog(
+    items: List<NotificationEntity>,
+    clearOlderThan: suspend (Long) -> Int,
+) {
+    val scope = rememberCoroutineScope()
+    var customDays by remember { mutableStateOf("14") }
+    var clearMessage by remember { mutableStateOf<String?>(null) }
+
+    fun clear(days: Int) {
+        val cutoffMs = System.currentTimeMillis() - days * 24L * 60L * 60L * 1000L
+        scope.launch {
+            val deleted = clearOlderThan(cutoffMs)
+            clearMessage = "Cleared $deleted notifications older than $days day${if (days == 1) "" else "s"}."
+        }
+    }
+
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            PanelCard {
+                Text("Clear history", fontWeight = FontWeight.Black)
+                Text(
+                    "Delete old captured notifications from this phone. Your original apps are untouched.",
+                    color = Color(0xFF61706A),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1 to "1 day", 7 to "7 days", 30 to "1 month").forEach { (days, label) ->
+                        Button(
+                            modifier = Modifier.weight(1f),
+                            onClick = { clear(days) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3F7F70)),
+                        ) {
+                            Text(label, maxLines = 1)
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = customDays,
+                        onValueChange = { customDays = it.filter(Char::isDigit).take(4) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Custom days") },
+                    )
+                    Button(
+                        onClick = {
+                            customDays.toIntOrNull()?.takeIf { it > 0 }?.let(::clear)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF17221E)),
+                    ) {
+                        Text("Clear")
+                    }
+                }
+                clearMessage?.let { Text(it, color = Color(0xFF61706A)) }
+            }
+        }
         items(items, key = { it.id }) { notification ->
             MobileNotificationRow(notification)
         }

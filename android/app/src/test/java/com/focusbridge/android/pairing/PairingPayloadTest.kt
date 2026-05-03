@@ -16,6 +16,7 @@ class PairingPayloadTest {
               "v": 1,
               "mode": "local",
               "endpoint": "192.168.1.24:9173",
+              "endpointCandidates": ["192.168.1.24:9173", "10.0.0.4:9173"],
               "deviceId": "desktop-1",
               "pairingKey": "abc123",
               "certFingerprint": "ffff"
@@ -24,6 +25,10 @@ class PairingPayloadTest {
         )
 
         assertEquals("192.168.1.24:9173", payload.syncEndpoint())
+        assertEquals(
+            listOf("192.168.1.24:9173", "10.0.0.4:9173"),
+            payload.syncEndpointCandidates(),
+        )
     }
 
     @Test

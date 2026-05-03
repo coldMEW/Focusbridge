@@ -16,6 +16,10 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 ## Most Recent Work
 
 - Current local slice fixes the first-run Android basics: responsive compact layout, Android 13+ notification runtime prompt, notification-listener status card, CameraX/ZXing QR scanner with camera permission request, manual pairing fallback that starts sync, cleartext local WS permission for MVP LAN pairing, and proper Material icons/buttons across APK navigation and setup actions.
+- Latest sync hardening fixes two concrete local-connection blockers: Android foreground sync now reconnects on every service start command after pairing is saved, and Android stores/tries multiple desktop endpoint candidates from the QR instead of failing forever on one stale/wrong Windows adapter IP.
+- Desktop QR now advertises multiple local IPv4 candidates, refreshes when the desktop window regains focus or the QR is near expiry, and includes a manual `Refresh QR / network` button for Wi-Fi/hotspot changes.
+- The committed `image.png` logo is now used in Android launcher resources, Android app header, desktop sidebar, and desktop PNG bundle/tray assets.
+- Both desktop and Android now support clearing old notification history for 1 day, 7 days, 1 month, or custom day counts. Desktop clears SQLite through Tauri; Android clears Room locally.
 - Desktop local pairing now sends explicit `AUTH_OK` / `AUTH_FAILED` WebSocket messages so Android marks the device green only after the desktop accepts the pairing key.
 - Desktop now has native OS notification popups for phone notifications when the main window is hidden, minimized, or unfocused; masked notifications stay masked in the popup body.
 - Desktop close behavior is now guarded: clicking the window X opens an in-app prompt with `Run in tray`, `Quit FocusBridge`, and `Cancel`, so background sync is preserved unless the user intentionally quits.
@@ -59,6 +63,7 @@ Recent connectivity progress:
 
 1. Install the debug APK on a physical Android phone, launch desktop Tauri, scan the QR, and record real pairing/notification delivery results in `docs/integration-log.md`.
 2. Verify native Windows notification toast behavior and close-to-tray behavior manually in a running Tauri desktop session.
-3. Harden local desktop transport from WS to WSS with persisted certs and Android pinning.
+3. Implement true different-network sync by wiring desktop into the existing relay registration/client path; direct LAN QR cannot cross NAT or isolated guest/hotspot networks by itself.
+4. Harden local desktop transport from WS to WSS with persisted certs and Android pinning.
 4. Add desktop-to-phone action handling for important/ignored/study-mode toggles.
 5. Add relay registration/client mode in desktop so different-Wi-Fi pairing becomes product-grade rather than local-only plus relay scaffold.

@@ -16,12 +16,20 @@ class WebSocketClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
 ) {
     private var socket: WebSocket? = null
+    @Volatile private var connectionSerial = 0
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
     val state: StateFlow<ConnectionState> = _state
 
-    fun connect(pairing: PairingEntity, deviceName: String = "Android phone") {
+    fun connect(
+        pairing: PairingEntity,
+        deviceName: String = "Android phone",
+        endpointOverride: String? = null,
+    ) {
+        disconnect()
+        val serial = ++connectionSerial
         _state.value = ConnectionState.CONNECTING
-        val endpoint = if (pairing.endpoint.startsWith("ws")) pairing.endpoint else "ws://${pairing.endpoint}"
+        val rawEndpoint = endpointOverride ?: pairing.endpoint
+        val endpoint = if (rawEndpoint.startsWith("ws")) rawEndpoint else "ws://$rawEndpoint"
         val request = Request.Builder().url(endpoint).build()
         socket = okHttpClient.newWebSocket(
             request,
@@ -32,17 +40,17 @@ class WebSocketClient @Inject constructor(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     when {
-                        text.contains("\"AUTH_OK\"") -> _state.value = ConnectionState.CONNECTED
-                        text.contains("\"AUTH_FAILED\"") -> _state.value = ConnectionState.DISCONNECTED
+                        text.contains("\"AUTH_OK\"") -> updateState(serial, ConnectionState.CONNECTED)
+                        text.contains("\"AUTH_FAILED\"") -> updateState(serial, ConnectionState.DISCONNECTED)
                     }
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    _state.value = ConnectionState.DISCONNECTED
+                    updateState(serial, ConnectionState.DISCONNECTED)
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    _state.value = ConnectionState.DISCONNECTED
+                    updateState(serial, ConnectionState.DISCONNECTED)
                 }
             },
         )
@@ -51,8 +59,17 @@ class WebSocketClient @Inject constructor(
     fun send(text: String): Boolean = socket?.send(text) == true
 
     fun disconnect() {
+        connectionSerial += 1
         socket?.close(1000, "FocusBridge disconnect")
         socket = null
-        _state.value = ConnectionState.DISCONNECTED
+        if (_state.value != ConnectionState.DISCONNECTED) {
+            _state.value = ConnectionState.DISCONNECTED
+        }
+    }
+
+    private fun updateState(serial: Int, state: ConnectionState) {
+        if (serial == connectionSerial) {
+            _state.value = state
+        }
     }
 }
