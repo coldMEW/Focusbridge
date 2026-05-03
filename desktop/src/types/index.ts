@@ -33,6 +33,7 @@ export interface Settings {
   studyModeEnabled: boolean;
   blockedApps: string[];
   priorityApps: string[];
+  studySafeApps: string[];
   favoriteContacts: string[];
   priorityKeywords: string[];
   twoFaModeEnabled: boolean;
@@ -40,3 +41,15 @@ export interface Settings {
 }
 
 export type FilterKind = "ALL" | "IMPORTANT" | "STUDY" | "TWOFA";
+
+export interface AppRule {
+  packageName: string;
+  label: string;
+  category: string;
+  notificationsSeen: number;
+  lastSeenAt: number;
+  muted: number;
+  priority: number;
+  studySafe: number;
+  updatedAt: number;
+}

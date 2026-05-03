@@ -27,3 +27,17 @@ pub struct PairedDeviceRow {
     pub created_at: i64,
     pub last_connected_at: Option<i64>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppRuleRow {
+    pub package_name: String,
+    pub label: String,
+    pub category: String,
+    pub notifications_seen: i64,
+    pub last_seen_at: i64,
+    pub muted: i32,
+    pub priority: i32,
+    pub study_safe: i32,
+    pub updated_at: i64,
+}

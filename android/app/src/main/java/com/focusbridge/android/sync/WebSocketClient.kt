@@ -14,6 +14,7 @@ import javax.inject.Singleton
 @Singleton
 class WebSocketClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
+    private val appInventoryProvider: AppInventoryProvider,
 ) {
     private var socket: WebSocket? = null
     @Volatile private var connectionSerial = 0
@@ -40,7 +41,10 @@ class WebSocketClient @Inject constructor(
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     when {
-                        text.contains("\"AUTH_OK\"") -> updateState(serial, ConnectionState.CONNECTED)
+                        text.contains("\"AUTH_OK\"") -> {
+                            updateState(serial, ConnectionState.CONNECTED)
+                            webSocket.send(Protocol.appInventory(appInventoryProvider.launchableApps()))
+                        }
                         text.contains("\"AUTH_FAILED\"") -> updateState(serial, ConnectionState.DISCONNECTED)
                     }
                 }

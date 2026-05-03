@@ -112,6 +112,58 @@
         "uptime": { "type": "integer" }
       }
     },
+    "AppInventory": {
+      "type": "object",
+      "required": ["apps"],
+      "properties": {
+        "apps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["packageName", "label", "category"],
+            "properties": {
+              "packageName": { "type": "string" },
+              "label": { "type": "string" },
+              "category": { "type": "string" },
+              "notificationsSeen": { "type": "integer" },
+              "lastSeenAt": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "RulesUpdate": {
+      "type": "object",
+      "required": ["version", "appRules"],
+      "properties": {
+        "version": { "type": "integer" },
+        "appRules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["packageName", "muted", "priority", "studySafe"],
+            "properties": {
+              "packageName": { "type": "string" },
+              "muted": { "type": "boolean" },
+              "priority": { "type": "boolean" },
+              "studySafe": { "type": "boolean" }
+            }
+          }
+        },
+        "priorityKeywords": { "type": "array", "items": { "type": "string" } },
+        "blockedKeywords": { "type": "array", "items": { "type": "string" } },
+        "favoriteContacts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "RulesAck": {
+      "type": "object",
+      "required": ["version", "applied"],
+      "properties": {
+        "version": { "type": "integer" },
+        "applied": { "type": "boolean" },
+        "error": { "type": "string" }
+      }
+    },
     "DesktopAction": {
       "type": "object",
       "required": ["action", "notificationId"],
@@ -138,6 +190,9 @@
     "PING",
     "PONG",
     "STATUS",
+    "APP_INVENTORY",
+    "RULES_UPDATE",
+    "RULES_ACK",
     "DESKTOP_ACTION",
     "UNPAIR"
   ]

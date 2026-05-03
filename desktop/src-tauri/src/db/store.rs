@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use std::path::Path;
 
-use super::models::NotificationRow;
+use super::models::{AppRuleRow, NotificationRow};
 
 pub fn init(db_path: &Path) -> Result<()> {
     if let Some(parent) = db_path.parent() {
@@ -18,6 +18,13 @@ pub fn init(db_path: &Path) -> Result<()> {
 pub fn upsert_notification(db_path: &Path, payload: &Value) -> Result<NotificationRow> {
     let row = notification_from_payload(payload);
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    upsert_app_seen(
+        &conn,
+        &row.package_name,
+        &row.app_name,
+        &categorize_app(&row.package_name, &row.app_name),
+        row.timestamp.max(row.received_at),
+    )?;
     conn.execute(
         "INSERT INTO notifications (
             id, app_name, package_name, sender, message, timestamp, received_at, status, priority, content_hidden
@@ -44,6 +51,96 @@ pub fn upsert_notification(db_path: &Path, payload: &Value) -> Result<Notificati
     )
     .context("upsert notification")?;
     Ok(row)
+}
+
+pub fn list_app_rules(db_path: &Path) -> Result<Vec<AppRuleRow>> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT package_name, label, category, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
+             FROM app_rules
+             ORDER BY muted ASC, priority DESC, notifications_seen DESC, label COLLATE NOCASE ASC",
+        )
+        .context("prepare app rules list")?;
+
+    let rows = stmt
+        .query_map([], app_rule_from_row)
+        .context("query app rules")?;
+
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect app rules")
+}
+
+pub fn set_app_rule_flag(
+    db_path: &Path,
+    package_name: &str,
+    flag: &str,
+    enabled: bool,
+) -> Result<AppRuleRow> {
+    let column = match flag {
+        "muted" => "muted",
+        "priority" => "priority",
+        "study_safe" => "study_safe",
+        other => anyhow::bail!("unsupported app rule flag: {other}"),
+    };
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.execute(
+        &format!(
+            "INSERT INTO app_rules (package_name, label, category, updated_at)
+             VALUES (?1, ?1, 'other', ?2)
+             ON CONFLICT(package_name) DO NOTHING"
+        ),
+        params![package_name, now_millis()],
+    )
+    .context("ensure app rule row")?;
+    conn.execute(
+        &format!("UPDATE app_rules SET {column} = ?1, updated_at = ?2 WHERE package_name = ?3"),
+        params![enabled as i32, now_millis(), package_name],
+    )
+    .context("update app rule flag")?;
+    get_app_rule(&conn, package_name)
+}
+
+pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRuleRow>> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    if let Some(apps) = payload.get("apps").and_then(Value::as_array) {
+        for app in apps {
+            let package_name = string_field(app, "packageName", "");
+            if package_name.is_empty() {
+                continue;
+            }
+            let label = string_field(app, "label", &package_name);
+            let category = string_field(app, "category", &categorize_app(&package_name, &label));
+            let notifications_seen = app
+                .get("notificationsSeen")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let last_seen_at = app
+                .get("lastSeenAt")
+                .and_then(Value::as_i64)
+                .unwrap_or_else(now_millis);
+            conn.execute(
+                "INSERT INTO app_rules (
+                    package_name, label, category, notifications_seen, last_seen_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(package_name) DO UPDATE SET
+                    label=excluded.label,
+                    category=excluded.category,
+                    notifications_seen=MAX(app_rules.notifications_seen, excluded.notifications_seen),
+                    last_seen_at=MAX(app_rules.last_seen_at, excluded.last_seen_at)",
+                params![
+                    package_name,
+                    label,
+                    category,
+                    notifications_seen,
+                    last_seen_at,
+                    now_millis(),
+                ],
+            )
+            .context("save app inventory row")?;
+        }
+    }
+    list_app_rules(db_path)
 }
 
 pub fn mark_status(db_path: &Path, id: &str, status: &str) -> Result<()> {
@@ -182,6 +279,106 @@ fn notification_from_payload(payload: &Value) -> NotificationRow {
             .and_then(Value::as_bool)
             .unwrap_or(false) as i32,
     }
+}
+
+fn upsert_app_seen(
+    conn: &Connection,
+    package_name: &str,
+    label: &str,
+    category: &str,
+    seen_at: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO app_rules (
+            package_name, label, category, notifications_seen, last_seen_at, updated_at
+         ) VALUES (?1, ?2, ?3, 1, ?4, ?5)
+         ON CONFLICT(package_name) DO UPDATE SET
+            label=excluded.label,
+            category=excluded.category,
+            notifications_seen=app_rules.notifications_seen + 1,
+            last_seen_at=MAX(app_rules.last_seen_at, excluded.last_seen_at)",
+        params![package_name, label, category, seen_at, now_millis()],
+    )
+    .context("upsert app seen")?;
+    Ok(())
+}
+
+fn get_app_rule(conn: &Connection, package_name: &str) -> Result<AppRuleRow> {
+    conn.query_row(
+        "SELECT package_name, label, category, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
+         FROM app_rules
+         WHERE package_name = ?1",
+        params![package_name],
+        app_rule_from_row,
+    )
+    .context("get app rule")
+}
+
+fn app_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AppRuleRow> {
+    Ok(AppRuleRow {
+        package_name: row.get(0)?,
+        label: row.get(1)?,
+        category: row.get(2)?,
+        notifications_seen: row.get(3)?,
+        last_seen_at: row.get(4)?,
+        muted: row.get(5)?,
+        priority: row.get(6)?,
+        study_safe: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+fn categorize_app(package_name: &str, label: &str) -> String {
+    let text = format!("{} {}", package_name, label).to_lowercase();
+    let category = if contains_any(
+        &text,
+        &[
+            "whatsapp",
+            "telegram",
+            "signal",
+            "messenger",
+            "messages",
+            "sms",
+            "discord",
+        ],
+    ) {
+        "messaging"
+    } else if contains_any(&text, &["gmail", "outlook", "mail", "proton"]) {
+        "email"
+    } else if contains_any(
+        &text,
+        &["calendar", "meet", "zoom", "teams", "classroom", "canvas"],
+    ) {
+        "school_work"
+    } else if contains_any(&text, &["bank", "paypal", "pay", "wallet", "finance"]) {
+        "finance"
+    } else if contains_any(
+        &text,
+        &[
+            "instagram",
+            "tiktok",
+            "snapchat",
+            "facebook",
+            "twitter",
+            "x.",
+            "reddit",
+        ],
+    ) {
+        "social"
+    } else if contains_any(&text, &["amazon", "shop", "store", "ebay", "walmart"]) {
+        "shopping"
+    } else if contains_any(&text, &["youtube", "spotify", "netflix", "music", "video"]) {
+        "media"
+    } else if contains_any(&text, &["android", "system", "settings", "google play"]) {
+        "system"
+    } else {
+        "other"
+    };
+    category.to_string()
+}
+
+fn contains_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
 }
 
 fn string_field(payload: &Value, key: &str, default: &str) -> String {

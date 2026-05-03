@@ -110,6 +110,13 @@ async fn handle_connection(
             IncomingDecision::StatusUpdate(payload) => {
                 app.emit("focusbridge://phone-status", payload)?;
             }
+            IncomingDecision::AppInventory(payload) => {
+                let rules = store::save_app_inventory(&state.db_path, &payload)?;
+                app.emit("focusbridge://app-rules", rules)?;
+            }
+            IncomingDecision::RulesAck(payload) => {
+                app.emit("focusbridge://rules-ack", payload)?;
+            }
             IncomingDecision::Unknown => {}
         }
     }

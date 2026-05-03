@@ -32,3 +32,18 @@ CREATE TABLE IF NOT EXISTS paired_devices (
     created_at INTEGER NOT NULL,
     last_connected_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS app_rules (
+    package_name TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'other',
+    notifications_seen INTEGER NOT NULL DEFAULT 0,
+    last_seen_at INTEGER NOT NULL DEFAULT 0,
+    muted INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 0,
+    study_safe INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_rules_category ON app_rules(category);
+CREATE INDEX IF NOT EXISTS idx_app_rules_muted ON app_rules(muted);

@@ -14,6 +14,9 @@ pub enum MessageType {
     Ping,
     Pong,
     Status,
+    AppInventory,
+    RulesUpdate,
+    RulesAck,
     DesktopAction,
     Unpair,
 }

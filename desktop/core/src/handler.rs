@@ -11,6 +11,8 @@ pub enum IncomingDecision {
     RemoveBatch(Vec<String>),
     PingReceived,
     StatusUpdate(Value),
+    AppInventory(Value),
+    RulesAck(Value),
     Unknown,
 }
 
@@ -49,9 +51,12 @@ pub fn handle_envelope(env: &Envelope, expected_pairing_key: &str) -> IncomingDe
         }
         MessageType::Ping => IncomingDecision::PingReceived,
         MessageType::Status => IncomingDecision::StatusUpdate(env.payload.clone()),
+        MessageType::AppInventory => IncomingDecision::AppInventory(env.payload.clone()),
+        MessageType::RulesAck => IncomingDecision::RulesAck(env.payload.clone()),
         MessageType::AuthOk
         | MessageType::AuthFailed
         | MessageType::Pong
+        | MessageType::RulesUpdate
         | MessageType::DesktopAction
         | MessageType::Unpair => IncomingDecision::Unknown,
     }
@@ -100,6 +105,26 @@ mod tests {
         assert_eq!(
             handle_envelope(&e, "k"),
             IncomingDecision::RemoveBatch(vec!["a".into(), "b".into()])
+        );
+    }
+
+    #[test]
+    fn routes_app_inventory_payload() {
+        let payload = json!({
+            "apps": [
+                {
+                    "packageName": "com.whatsapp",
+                    "label": "WhatsApp",
+                    "category": "messaging",
+                    "notificationsSeen": 3,
+                    "lastSeenAt": 123
+                }
+            ]
+        });
+        let e = env(MessageType::AppInventory, payload.clone());
+        assert_eq!(
+            handle_envelope(&e, "k"),
+            IncomingDecision::AppInventory(payload)
         );
     }
 }

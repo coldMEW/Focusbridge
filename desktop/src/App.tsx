@@ -10,9 +10,10 @@ import SettingsPanel from "./components/SettingsPanel";
 import logo from "./assets/logo.png";
 import { useConnection } from "./hooks/useConnection";
 import { useConnectionStore } from "./stores/connectionStore";
+import { useAppRulesStore } from "./stores/appRulesStore";
 import { useNotificationStore } from "./stores/notificationStore";
 import { useSettingsStore } from "./stores/settingsStore";
-import type { ConnectionState, Notification } from "./types";
+import type { AppRule, ConnectionState, Notification } from "./types";
 
 interface NativeNotificationRow {
   id: string;
@@ -32,6 +33,7 @@ interface NativeSettingsSnapshot {
   two_fa_mode_enabled?: boolean;
   blocked_apps?: string[];
   priority_apps?: string[];
+  study_safe_apps?: string[];
   favorite_contacts?: string[];
   priority_keywords?: string[];
   sync_mode?: "LOCAL" | "CLOUD";
@@ -62,6 +64,8 @@ export default function App() {
   const replaceAll = useNotificationStore((s) => s.replaceAll);
   const notifications = useNotificationStore((s) => s.items);
   const replaceSettings = useSettingsStore((s) => s.replace);
+  const replaceAppRules = useAppRulesStore((s) => s.replaceAll);
+  const setAppRuleLists = useSettingsStore((s) => s.setAppRuleLists);
 
   useEffect(() => {
     invoke<NativeNotificationRow[]>("list_notifications", { limit: 150 })
@@ -74,6 +78,7 @@ export default function App() {
           twoFaModeEnabled: Boolean(settings.two_fa_mode_enabled),
           blockedApps: settings.blocked_apps ?? [],
           priorityApps: settings.priority_apps ?? [],
+          studySafeApps: settings.study_safe_apps ?? [],
           favoriteContacts: settings.favorite_contacts ?? [],
           priorityKeywords: settings.priority_keywords?.length
             ? settings.priority_keywords
@@ -82,7 +87,13 @@ export default function App() {
         }),
       )
       .catch((error) => console.warn("Unable to hydrate settings", error));
-  }, [replaceAll, replaceSettings]);
+    invoke<AppRule[]>("list_app_rules")
+      .then((rules) => {
+        replaceAppRules(rules);
+        setAppRuleLists(rules);
+      })
+      .catch((error) => console.warn("Unable to hydrate app rules", error));
+  }, [replaceAll, replaceAppRules, replaceSettings, setAppRuleLists]);
 
   useEffect(() => {
     const unlisten = Promise.all([
@@ -91,6 +102,10 @@ export default function App() {
       }),
       listen<NativeNotificationRow>("focusbridge://notification", (event) => {
         upsert(fromNative(event.payload));
+      }),
+      listen<AppRule[]>("focusbridge://app-rules", (event) => {
+        replaceAppRules(event.payload);
+        setAppRuleLists(event.payload);
       }),
       listen<string>("focusbridge://dismissal", (event) => {
         remove(event.payload);
@@ -105,7 +120,7 @@ export default function App() {
         listeners.forEach((dispose) => dispose());
       });
     };
-  }, [remove, setConnectionState, upsert]);
+  }, [remove, replaceAppRules, setAppRuleLists, setConnectionState, upsert]);
 
   const showPairing = state === "DISCONNECTED";
   const newCount = notifications.filter((n) => n.status === "NEW").length;

@@ -28,6 +28,9 @@ enum class MessageType {
     PING,
     PONG,
     STATUS,
+    APP_INVENTORY,
+    RULES_UPDATE,
+    RULES_ACK,
     DESKTOP_ACTION,
     UNPAIR,
 }
@@ -38,6 +41,20 @@ data class AuthPayload(
     val deviceId: String,
     val deviceName: String,
     val role: String = "phone",
+)
+
+@Serializable
+data class AppInventoryItem(
+    val packageName: String,
+    val label: String,
+    val category: String,
+    val notificationsSeen: Int = 0,
+    val lastSeenAt: Long = 0,
+)
+
+@Serializable
+data class AppInventoryPayload(
+    val apps: List<AppInventoryItem>,
 )
 
 object Protocol {
@@ -83,6 +100,18 @@ object Protocol {
             Envelope(
                 type = MessageType.DISMISSAL,
                 payload = buildJsonObject { put("id", id) },
+            ),
+        )
+
+    fun appInventory(apps: List<AppInventoryItem>): String =
+        json.encodeToString(
+            Envelope.serializer(),
+            Envelope(
+                type = MessageType.APP_INVENTORY,
+                payload = json.encodeToJsonElement(
+                    AppInventoryPayload.serializer(),
+                    AppInventoryPayload(apps),
+                ),
             ),
         )
 }
