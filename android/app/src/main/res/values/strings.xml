@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">FocusBridge</string>
+    <string name="sync_notification_channel">FocusBridge sync</string>
+    <string name="sync_notification_title">FocusBridge is listening</string>
+</resources>

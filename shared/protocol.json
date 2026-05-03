@@ -4,11 +4,10 @@
   "$defs": {
     "Envelope": {
       "type": "object",
-      "required": ["v", "type", "ts", "payload"],
+      "required": ["version", "type", "payload"],
       "properties": {
-        "v": { "const": 1 },
+        "version": { "const": 1 },
         "type": { "type": "string" },
-        "ts": { "type": "integer" },
         "payload": { "type": "object" }
       }
     },
@@ -19,7 +18,7 @@
         "pairingKey": { "type": "string" },
         "deviceId": { "type": "string" },
         "deviceName": { "type": "string" },
-        "role": { "enum": ["android", "desktop"] }
+        "role": { "enum": ["phone", "desktop"] }
       }
     },
     "AuthOk": {
@@ -51,7 +50,7 @@
         "sender": { "type": ["string", "null"] },
         "message": { "type": ["string", "null"] },
         "timestamp": { "type": "integer" },
-        "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "priority": { "enum": ["LOW", "NORMAL", "HIGH", "URGENT"] },
         "contentHidden": { "type": "boolean" },
         "batchId": { "type": ["string", "null"] }
       }
@@ -80,7 +79,7 @@
             }
           }
         },
-        "priority": { "type": "integer" },
+        "priority": { "enum": ["LOW", "NORMAL", "HIGH", "URGENT"] },
         "contentHidden": { "type": "boolean" }
       }
     },

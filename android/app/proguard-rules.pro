@@ -1,0 +1,2 @@
+-keep class com.focusbridge.android.sync.** { *; }
+-keep class kotlinx.serialization.** { *; }

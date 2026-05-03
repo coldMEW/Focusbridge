@@ -1,0 +1,20 @@
+name: relay-ci
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+        working-directory: relay
+      - run: cargo clippy -- -D warnings
+        working-directory: relay
+      - run: cargo test
+        working-directory: relay
+      - run: docker build -t focusbridge-relay:ci .
+        working-directory: relay
