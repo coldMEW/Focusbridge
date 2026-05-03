@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS app_rules (
     package_name TEXT PRIMARY KEY,
     label TEXT NOT NULL,
     category TEXT NOT NULL DEFAULT 'other',
+    icon_data_url TEXT NOT NULL DEFAULT '',
     notifications_seen INTEGER NOT NULL DEFAULT 0,
     last_seen_at INTEGER NOT NULL DEFAULT 0,
     muted INTEGER NOT NULL DEFAULT 0,

@@ -34,6 +34,7 @@ pub struct AppRuleRow {
     pub package_name: String,
     pub label: String,
     pub category: String,
+    pub icon_data_url: String,
     pub notifications_seen: i64,
     pub last_seen_at: i64,
     pub muted: i32,

@@ -51,9 +51,22 @@ export default function AppRulesPanel() {
             className="rounded-2xl border border-border-subtle bg-bg-primary/70 p-3"
           >
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-text-primary">{rule.label}</div>
-                <div className="truncate text-[11px] text-text-muted">{rule.packageName}</div>
+              <div className="flex min-w-0 items-center gap-3">
+                {rule.iconDataUrl ? (
+                  <img
+                    src={rule.iconDataUrl}
+                    alt=""
+                    className="h-10 w-10 shrink-0 rounded-xl bg-bg-secondary object-contain p-1 shadow-sm"
+                  />
+                ) : (
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-bg-secondary text-xs font-black text-accent-study">
+                    {rule.label.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-text-primary">{rule.label}</div>
+                  <div className="truncate text-[11px] text-text-muted">{rule.packageName}</div>
+                </div>
               </div>
               <span className="rounded-full bg-bg-secondary px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-text-secondary">
                 {rule.category.replace("_", " ")}

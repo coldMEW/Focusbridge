@@ -2,8 +2,13 @@ package com.focusbridge.android.sync
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.util.Base64
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,6 +28,7 @@ class AppInventoryProvider @Inject constructor(
                     packageName = packageName,
                     label = label,
                     category = categorize(packageName, label),
+                    iconDataUrl = info.loadIcon(manager)?.toDataUrl(),
                 )
             }
             .distinctBy { it.packageName }
@@ -46,4 +52,26 @@ class AppInventoryProvider @Inject constructor(
     }
 
     private fun String.hasAny(vararg needles: String): Boolean = needles.any(::contains)
+
+    private fun Drawable.toDataUrl(): String? = runCatching {
+        val bitmap = toBitmap(ICON_SIZE_PX, ICON_SIZE_PX)
+        val out = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 90, out)
+        "data:image/png;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }.getOrNull()
+
+    private fun Drawable.toBitmap(width: Int, height: Int): Bitmap {
+        if (this is BitmapDrawable && bitmap != null) {
+            return Bitmap.createScaledBitmap(bitmap, width, height, true)
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        setBounds(0, 0, canvas.width, canvas.height)
+        draw(canvas)
+        return bitmap
+    }
+
+    private companion object {
+        const val ICON_SIZE_PX = 48
+    }
 }

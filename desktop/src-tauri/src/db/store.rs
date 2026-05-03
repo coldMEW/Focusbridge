@@ -12,6 +12,7 @@ pub fn init(db_path: &Path) -> Result<()> {
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
     conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
         .context("apply desktop sqlite schema")?;
+    ensure_app_rule_icon_column(&conn)?;
     Ok(())
 }
 
@@ -57,7 +58,7 @@ pub fn list_app_rules(db_path: &Path) -> Result<Vec<AppRuleRow>> {
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
     let mut stmt = conn
         .prepare(
-            "SELECT package_name, label, category, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
+            "SELECT package_name, label, category, icon_data_url, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
              FROM app_rules
              ORDER BY muted ASC, priority DESC, notifications_seen DESC, label COLLATE NOCASE ASC",
         )
@@ -111,6 +112,7 @@ pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRule
             }
             let label = string_field(app, "label", &package_name);
             let category = string_field(app, "category", &categorize_app(&package_name, &label));
+            let icon_data_url = string_field(app, "iconDataUrl", "");
             let notifications_seen = app
                 .get("notificationsSeen")
                 .and_then(Value::as_i64)
@@ -121,17 +123,22 @@ pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRule
                 .unwrap_or_else(now_millis);
             conn.execute(
                 "INSERT INTO app_rules (
-                    package_name, label, category, notifications_seen, last_seen_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    package_name, label, category, icon_data_url, notifications_seen, last_seen_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(package_name) DO UPDATE SET
                     label=excluded.label,
                     category=excluded.category,
+                    icon_data_url=CASE
+                        WHEN excluded.icon_data_url != '' THEN excluded.icon_data_url
+                        ELSE app_rules.icon_data_url
+                    END,
                     notifications_seen=MAX(app_rules.notifications_seen, excluded.notifications_seen),
                     last_seen_at=MAX(app_rules.last_seen_at, excluded.last_seen_at)",
                 params![
                     package_name,
                     label,
                     category,
+                    icon_data_url,
                     notifications_seen,
                     last_seen_at,
                     now_millis(),
@@ -305,7 +312,7 @@ fn upsert_app_seen(
 
 fn get_app_rule(conn: &Connection, package_name: &str) -> Result<AppRuleRow> {
     conn.query_row(
-        "SELECT package_name, label, category, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
+        "SELECT package_name, label, category, icon_data_url, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
          FROM app_rules
          WHERE package_name = ?1",
         params![package_name],
@@ -319,13 +326,31 @@ fn app_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AppRuleRow> {
         package_name: row.get(0)?,
         label: row.get(1)?,
         category: row.get(2)?,
-        notifications_seen: row.get(3)?,
-        last_seen_at: row.get(4)?,
-        muted: row.get(5)?,
-        priority: row.get(6)?,
-        study_safe: row.get(7)?,
-        updated_at: row.get(8)?,
+        icon_data_url: row.get(3)?,
+        notifications_seen: row.get(4)?,
+        last_seen_at: row.get(5)?,
+        muted: row.get(6)?,
+        priority: row.get(7)?,
+        study_safe: row.get(8)?,
+        updated_at: row.get(9)?,
     })
+}
+
+fn ensure_app_rule_icon_column(conn: &Connection) -> Result<()> {
+    let exists: bool = conn
+        .prepare("PRAGMA table_info(app_rules)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|name| name == "icon_data_url");
+    if !exists {
+        conn.execute(
+            "ALTER TABLE app_rules ADD COLUMN icon_data_url TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .context("add app rule icon column")?;
+    }
+    Ok(())
 }
 
 fn categorize_app(package_name: &str, label: &str) -> String {

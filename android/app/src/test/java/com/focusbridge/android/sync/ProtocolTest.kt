@@ -13,6 +13,7 @@ class ProtocolTest {
                     packageName = "com.whatsapp",
                     label = "WhatsApp",
                     category = "messaging",
+                    iconDataUrl = "data:image/png;base64,abc123",
                     notificationsSeen = 2,
                     lastSeenAt = 123L,
                 ),
@@ -23,5 +24,6 @@ class ProtocolTest {
         assertEquals(MessageType.APP_INVENTORY, envelope.type)
         assertTrue(encoded.contains("\"packageName\":\"com.whatsapp\""))
         assertTrue(encoded.contains("\"category\":\"messaging\""))
+        assertTrue(encoded.contains("\"iconDataUrl\":\"data:image/png;base64,abc123\""))
     }
 }

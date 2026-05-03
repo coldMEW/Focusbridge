@@ -125,6 +125,7 @@
               "packageName": { "type": "string" },
               "label": { "type": "string" },
               "category": { "type": "string" },
+              "iconDataUrl": { "type": ["string", "null"] },
               "notificationsSeen": { "type": "integer" },
               "lastSeenAt": { "type": "integer" }
             }

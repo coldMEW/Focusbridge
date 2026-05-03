@@ -48,6 +48,7 @@ data class AppInventoryItem(
     val packageName: String,
     val label: String,
     val category: String,
+    val iconDataUrl: String? = null,
     val notificationsSeen: Int = 0,
     val lastSeenAt: Long = 0,
 )

@@ -46,6 +46,7 @@ export interface AppRule {
   packageName: string;
   label: string;
   category: string;
+  iconDataUrl: string;
   notificationsSeen: number;
   lastSeenAt: number;
   muted: number;
