@@ -15,6 +15,11 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 ## Most Recent Work
 
+- Current local slice fixes the first-run Android basics: responsive compact layout, Android 13+ notification runtime prompt, notification-listener status card, CameraX/ZXing QR scanner with camera permission request, manual pairing fallback that starts sync, cleartext local WS permission for MVP LAN pairing, and proper Material icons/buttons across APK navigation and setup actions.
+- Desktop local pairing now sends explicit `AUTH_OK` / `AUTH_FAILED` WebSocket messages so Android marks the device green only after the desktop accepts the pairing key.
+- Android notification processing now reads user-configurable privacy/filter rules from local config: Masked Peek Mode, blocked keywords, priority keywords, and favorite contacts.
+- Desktop notification cards now support Masked Peek Mode: hidden notifications show a masked chip until hover, focus, or click reveals the message.
+- Latest local APK output: `android/app/build/outputs/apk/debug/app-debug.apk`.
 - Normalized desktop core protocol to the playbook envelope shape: `version`, `type`, `payload`.
 - Updated `shared/protocol.json` to use `phone`/`desktop` roles and protocol priority enums.
 - Added desktop native app state, SQLite helper functions, and DB-backed notification/settings/pairing commands.
@@ -38,7 +43,7 @@ Recent connectivity progress:
 
 - Desktop local WebSocket is currently plain WS for MVP wiring. WSS with persisted self-signed certs and Android certificate pinning still needs hardening.
 - Desktop notification list now has code to hydrate existing SQLite notifications on launch, but the latest UI slice still needs verification before it is committed.
-- Android QR scanning is currently manual payload paste; CameraX/ZXing camera scanning still needs UI integration.
+- Android QR scanning now exists in the Pair tab, but still needs physical-device verification against the live desktop QR on the same Wi-Fi.
 - Cloud relay endpoint construction now exists on Android, but desktop still needs relay registration/client mode and the QR generator still emits local-only payloads until relay settings are wired.
 - Android certificate pinning is represented by `CertificateManager`, but the WebSocket client is plain WS until desktop WSS hardening is done.
 - Local verification previously hit environment permission blockers: Cargo could not open stale `target/.cargo-lock`, and Vitest/esbuild could not spawn in the sandbox.
@@ -50,8 +55,8 @@ Recent connectivity progress:
 
 ## Next Best Tasks
 
-1. Add QR camera scanning with ZXing/CameraX or another scanner integration.
-2. Verify and commit the current desktop/mobile UI polish slice once `pnpm tsc --noEmit`, `pnpm vitest run`, `pnpm build`, `cargo check --locked`, and `./gradlew.bat test lint assembleDebug` can run again.
+1. Install the debug APK on a physical Android phone, launch desktop Tauri, scan the QR, and record real pairing/notification delivery results in `docs/integration-log.md`.
+2. Commit and push the first-run pairing/privacy/UI polish slice after final review.
 3. Harden local desktop transport from WS to WSS with persisted certs and Android pinning.
 4. Add desktop-to-phone action handling for important/ignored/study-mode toggles.
-5. Test real phone-to-desktop pairing on the same Wi-Fi and record results in `docs/integration-log.md`.
+5. Add relay registration/client mode in desktop so different-Wi-Fi pairing becomes product-grade rather than local-only plus relay scaffold.

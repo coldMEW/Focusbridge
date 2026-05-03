@@ -3,7 +3,7 @@ use crate::state::AppState;
 use anyhow::{Context, Result};
 use focusbridge_core::handler::{handle_envelope, IncomingDecision};
 use focusbridge_core::protocol::Envelope;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tauri::{AppHandle, Emitter};
 use tokio::net::{TcpListener, TcpStream};
@@ -63,10 +63,20 @@ async fn handle_connection(
         match handle_envelope(&envelope, &expected_key) {
             IncomingDecision::AuthAccepted => {
                 info!(peer = %peer, "phone authenticated");
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                    r#"{"version":1,"type":"AUTH_OK","payload":{}}"#.into(),
+                ))
+                .await
+                .context("send auth ok")?;
                 app.emit("focusbridge://connection", "CONNECTED")?;
             }
             IncomingDecision::AuthFailed(reason) => {
                 warn!(peer = %peer, reason = %reason, "phone auth failed");
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                    r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
+                ))
+                .await
+                .ok();
                 app.emit("focusbridge://connection", "DISCONNECTED")?;
             }
             IncomingDecision::StoreNotification(payload) => {

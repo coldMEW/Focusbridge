@@ -27,8 +27,14 @@ class WebSocketClient @Inject constructor(
             request,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    _state.value = ConnectionState.CONNECTED
                     webSocket.send(Protocol.auth(pairing.pairingKey, pairing.deviceId, deviceName))
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    when {
+                        text.contains("\"AUTH_OK\"") -> _state.value = ConnectionState.CONNECTED
+                        text.contains("\"AUTH_FAILED\"") -> _state.value = ConnectionState.DISCONNECTED
+                    }
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {

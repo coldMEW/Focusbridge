@@ -35,7 +35,7 @@ describe("NotificationCard", () => {
     expect(ignore).toHaveBeenCalledWith("n1");
   });
 
-  it("masks hidden content", () => {
+  it("masks hidden content until the user peeks", () => {
     render(
       <NotificationCard
         notification={make({ contentHidden: true, message: "hidden" })}
@@ -43,7 +43,10 @@ describe("NotificationCard", () => {
         onImportant={() => {}}
       />,
     );
-    expect(screen.getByText("New private message")).toBeInTheDocument();
+    expect(screen.getByText("Masked message - hover or tap to peek")).toBeInTheDocument();
+    expect(screen.queryByText("hidden")).not.toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByLabelText("Masked message. Hover, focus, or click to peek."));
+    expect(screen.getByText("hidden")).toBeInTheDocument();
   });
 
   it("shows 2FA badge for high priority", () => {

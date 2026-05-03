@@ -15,7 +15,8 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.FocusBridge">
+        android:theme="@style/Theme.FocusBridge"
+        android:usesCleartextTraffic="true">
 
         <service
             android:name=".service.NotificationService"

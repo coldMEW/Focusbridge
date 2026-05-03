@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Notification } from "../types";
 import { relativeTime } from "../utils/time";
 import { priorityBadge, priorityLevel } from "../utils/priority";
@@ -15,10 +16,13 @@ export default function NotificationCard({
   onIgnore,
   onImportant,
 }: Props) {
+  const [peekVisible, setPeekVisible] = useState(false);
   const is2fa = notification.priority >= 100;
   const isImportant = notification.status === "IMPORTANT";
   const level = priorityLevel(notification.priority);
   const initials = notification.appName.slice(0, 2).toUpperCase();
+  const shouldMask = notification.contentHidden && !peekVisible;
+  const body = notification.message || "New notification";
 
   return (
     <article
@@ -42,10 +46,24 @@ export default function NotificationCard({
             <span>{notification.sender || "Unknown sender"}</span>
           </div>
           <p className="mt-1 line-clamp-2 text-[15px] leading-6 text-text-primary">
-            {notification.contentHidden ? (
-              <em className="text-text-secondary">New private message</em>
+            {shouldMask ? (
+              <button
+                type="button"
+                onClick={() => setPeekVisible(true)}
+                onFocus={() => setPeekVisible(true)}
+                onMouseEnter={() => setPeekVisible(true)}
+                className="rounded-full border border-border-subtle bg-bg-primary/60 px-3 py-1 text-left text-sm italic text-text-secondary transition hover:border-border-hover hover:text-text-primary"
+                aria-label="Masked message. Hover, focus, or click to peek."
+              >
+                Masked message - hover or tap to peek
+              </button>
             ) : (
-              notification.message || "New notification"
+              <span
+                onMouseLeave={() => setPeekVisible(false)}
+                className={notification.contentHidden ? "rounded-lg bg-[#fff0c7] px-1.5 py-0.5" : ""}
+              >
+                {body}
+              </span>
             )}
           </p>
         </div>
