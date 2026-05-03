@@ -24,7 +24,7 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Added Android MVP scaffold for notification capture, local persistence, basic pairing input, and WebSocket sync.
 - Installed Gradle 8.7 in `C:\tmp\gradle-8.7`, generated `android/gradlew(.bat)`, installed Android SDK command-line tools/platform 34/build-tools 34.0.0/platform-tools in `C:\tmp\android-sdk`, and configured ignored `android/local.properties`.
 - Added GitHub Actions for Android, desktop, and relay CI.
-- Fixed initial CI failures by committing Rust lockfiles, making `android/gradlew` executable for Linux runners, using portable Rust `stable` toolchains, updating GitHub Actions to current Node-24-compatible major versions, and disabling desktop matrix fail-fast.
+- Fixed initial CI failures by committing Rust lockfiles, making `android/gradlew` executable for Linux runners, using portable Rust `stable` toolchains, updating GitHub Actions to current Node-24-compatible major versions, disabling desktop matrix fail-fast, and running `pnpm build` before desktop `cargo check --locked` so Tauri has `frontendDist`.
 
 ## Known Gaps
 

@@ -27,5 +27,7 @@ jobs:
         working-directory: desktop
       - run: pnpm vitest run
         working-directory: desktop
+      - run: pnpm build
+        working-directory: desktop
       - run: cargo check --locked
         working-directory: desktop
