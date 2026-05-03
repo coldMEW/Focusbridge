@@ -43,6 +43,7 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
         mode: "local".into(),
         endpoint: endpoint.clone(),
         relay_url: None,
+        device_pair_id: None,
         device_id: device_id.clone(),
         pairing_key: pairing_key.clone(),
         cert_fingerprint: cert.fingerprint_sha256_hex.clone(),

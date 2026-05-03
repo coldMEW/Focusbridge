@@ -16,7 +16,7 @@ pub enum AuthError {
 
 pub fn parse_role(role: &str) -> Result<Role, AuthError> {
     match role {
-        "android" => Ok(Role::Android),
+        "android" | "phone" => Ok(Role::Android),
         "desktop" => Ok(Role::Desktop),
         _ => Err(AuthError::InvalidRole),
     }
@@ -49,8 +49,8 @@ mod tests {
     #[test]
     fn role_parses() {
         assert_eq!(parse_role("android").unwrap(), Role::Android);
+        assert_eq!(parse_role("phone").unwrap(), Role::Android);
         assert_eq!(parse_role("desktop").unwrap(), Role::Desktop);
-        assert!(parse_role("phone").is_err());
     }
 
     #[test]

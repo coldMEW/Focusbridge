@@ -10,10 +10,15 @@ pub struct QrPayload {
     pub v: u32,
     pub mode: String,
     pub endpoint: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "relayUrl", skip_serializing_if = "Option::is_none")]
     pub relay_url: Option<String>,
+    #[serde(rename = "devicePairId", skip_serializing_if = "Option::is_none")]
+    pub device_pair_id: Option<String>,
+    #[serde(rename = "deviceId")]
     pub device_id: String,
+    #[serde(rename = "pairingKey")]
     pub pairing_key: String,
+    #[serde(rename = "certFingerprint")]
     pub cert_fingerprint: String,
 }
 
@@ -51,6 +56,7 @@ mod tests {
             mode: "local".into(),
             endpoint: "1.2.3.4:9173".into(),
             relay_url: None,
+            device_pair_id: None,
             device_id: "id".into(),
             pairing_key: "a".repeat(64),
             cert_fingerprint: "b".repeat(64),
@@ -58,5 +64,28 @@ mod tests {
         let out = make_qr(&p, 10).unwrap();
         assert!(!out.png_base64.is_empty());
         assert_eq!(out.expires_at, 10);
+    }
+
+    #[test]
+    fn serializes_android_compatible_camel_case_fields() {
+        let p = QrPayload {
+            v: 1,
+            mode: "cloud".into(),
+            endpoint: "1.2.3.4:9173".into(),
+            relay_url: Some("https://relay.example".into()),
+            device_pair_id: Some("pair_123".into()),
+            device_id: "id".into(),
+            pairing_key: "a".repeat(64),
+            cert_fingerprint: "b".repeat(64),
+        };
+
+        let payload = make_qr(&p, 10).unwrap().payload;
+
+        assert!(payload.contains("\"relayUrl\""));
+        assert!(payload.contains("\"devicePairId\""));
+        assert!(payload.contains("\"deviceId\""));
+        assert!(payload.contains("\"pairingKey\""));
+        assert!(payload.contains("\"certFingerprint\""));
+        assert!(!payload.contains("relay_url"));
     }
 }

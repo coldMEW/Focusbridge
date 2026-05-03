@@ -2,6 +2,8 @@ package com.focusbridge.android.pairing
 
 import com.focusbridge.android.data.local.PairingEntity
 import com.focusbridge.android.data.repository.PairingRepository
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
@@ -12,10 +14,32 @@ data class QrPairingPayload(
     val mode: String,
     val endpoint: String,
     val relayUrl: String? = null,
+    val devicePairId: String? = null,
     val deviceId: String,
     val pairingKey: String,
     val certFingerprint: String,
-)
+) {
+    fun syncEndpoint(): String {
+        val normalizedMode = mode.uppercase()
+        if (normalizedMode != "CLOUD" || relayUrl.isNullOrBlank() || devicePairId.isNullOrBlank()) {
+            return endpoint
+        }
+
+        val base = relayUrl.toRelayWebSocketBase()
+        val key = URLEncoder.encode(pairingKey, StandardCharsets.UTF_8.name())
+        return "$base/ws/$devicePairId?role=phone&pairing_key=$key"
+    }
+}
+
+private fun String.toRelayWebSocketBase(): String {
+    val trimmed = trim().trimEnd('/')
+    return when {
+        trimmed.startsWith("wss://") || trimmed.startsWith("ws://") -> trimmed
+        trimmed.startsWith("https://") -> "wss://${trimmed.removePrefix("https://")}"
+        trimmed.startsWith("http://") -> "ws://${trimmed.removePrefix("http://")}"
+        else -> "wss://$trimmed"
+    }
+}
 
 class PairingManager @Inject constructor(
     private val repository: PairingRepository,
@@ -26,7 +50,7 @@ class PairingManager @Inject constructor(
         val payload = json.decodeFromString(QrPairingPayload.serializer(), rawQrPayload)
         val pairing = PairingEntity(
             deviceId = payload.deviceId,
-            endpoint = payload.endpoint,
+            endpoint = payload.syncEndpoint(),
             pairingKey = payload.pairingKey,
             certFingerprint = payload.certFingerprint,
             mode = payload.mode.uppercase(),

@@ -30,11 +30,13 @@ Implemented:
 - Protocol envelope shape across shared, desktop, and Android.
 - Desktop SQLite persistence and live Tauri events.
 - Manual QR payload pairing and local endpoint storage.
+- Android waits for WebSocket `CONNECTED` before flushing pending notifications.
+- Desktop QR serialization and Android QR parsing agree on camelCase payload fields.
 
 Missing before production:
 - Local transport is still plain `ws://`, not pinned `wss://`.
 - Android QR camera scanning is not implemented.
-- Reconnection needs stronger condition-based flushing after socket open.
+- Reconnection needs retry/backoff-driven re-flushing after later reconnects.
 - End-to-end physical-device latency test has not been recorded.
 
 ## Phase 3: Desktop Triage
@@ -90,11 +92,13 @@ Status: relay server implemented, clients not wired.
 
 Implemented:
 - Rust relay with auth, WebSocket routing, queue TTL, metrics, Docker build, and CI.
+- Relay now accepts the playbook `phone` role while preserving the older `android` alias.
+- Android can derive a relay WebSocket endpoint from cloud QR payload fields (`relayUrl` and `devicePairId`).
 
 Missing before production:
 - Desktop relay client mode is not connected to UI/settings.
 - Android cloud relay mode is not connected to pairing/settings.
-- QR pairing does not yet advertise both local and relay endpoints.
+- QR pairing does not yet advertise both local and relay endpoints because desktop relay registration/settings are not wired.
 - Hosted relay deployment and real cross-network acceptance test.
 
 ## Phase 7: Deep Focus / AI / Paid Features

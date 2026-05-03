@@ -5,6 +5,8 @@ import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.data.repository.PairingRepository
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Singleton
 class SyncEngine @Inject constructor(
@@ -15,7 +17,12 @@ class SyncEngine @Inject constructor(
     suspend fun connectActivePairing() {
         val pairing = pairings.active() ?: return
         client.connect(pairing)
-        flushPending()
+        val connected = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+            client.state.first { it == ConnectionState.CONNECTED }
+        } != null
+        if (connected) {
+            flushPending()
+        }
     }
 
     suspend fun send(notification: NotificationEntity) {
@@ -26,5 +33,9 @@ class SyncEngine @Inject constructor(
 
     suspend fun flushPending() {
         notifications.pending().forEach { send(it) }
+    }
+
+    private companion object {
+        const val CONNECT_TIMEOUT_MS = 10_000L
     }
 }
