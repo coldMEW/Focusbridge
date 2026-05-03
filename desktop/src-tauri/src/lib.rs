@@ -15,6 +15,8 @@ use tracing::info;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    configure_platform_identity();
+
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init()
@@ -58,6 +60,7 @@ pub fn run() {
             commands::notification_cmd::mark_important,
             commands::notification_cmd::mark_ignored,
             commands::notification_cmd::clear_notifications_older_than,
+            commands::notification_cmd::clear_all_notifications,
             minimize_to_tray,
             quit_app,
         ])
@@ -72,6 +75,19 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("tauri runtime error");
 }
+
+#[cfg(windows)]
+fn configure_platform_identity() {
+    use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
+    let app_id: Vec<u16> = "com.focusbridge.desktop\0".encode_utf16().collect();
+    unsafe {
+        let _ = SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr());
+    }
+}
+
+#[cfg(not(windows))]
+fn configure_platform_identity() {}
 
 #[tauri::command]
 fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {

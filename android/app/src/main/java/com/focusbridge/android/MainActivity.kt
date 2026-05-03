@@ -267,6 +267,7 @@ private fun FocusBridgeScreen(
                         AppTab.Log -> NotificationLog(
                             items = items,
                             clearOlderThan = { cutoffMs -> notifications.clearOlderThan(cutoffMs) },
+                            clearAll = { notifications.clearAll() },
                         )
                     }
                 }
@@ -331,8 +332,11 @@ private fun Header(
                         )
                         Text(
                             "FocusBridge",
+                            modifier = Modifier.weight(1f, fill = false),
                             style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     Text(
@@ -470,8 +474,9 @@ private fun PairTab(
         if (!granted) pairingMessage = "Camera permission is needed to scan the desktop QR."
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        PanelCard {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            PanelCard {
             Text("Pair with desktop", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
             Text(
                 "Scan the desktop QR code. Manual paste is still available for debugging.",
@@ -528,6 +533,7 @@ private fun PairTab(
                 Text("Save pairing")
             }
             pairingMessage?.let { Text(it, color = Color(0xFF61706A)) }
+            }
         }
     }
 }
@@ -743,6 +749,7 @@ private fun RulesTab(
 private fun NotificationLog(
     items: List<NotificationEntity>,
     clearOlderThan: suspend (Long) -> Int,
+    clearAll: suspend () -> Int,
 ) {
     val scope = rememberCoroutineScope()
     var customDays by remember { mutableStateOf("14") }
@@ -753,6 +760,13 @@ private fun NotificationLog(
         scope.launch {
             val deleted = clearOlderThan(cutoffMs)
             clearMessage = "Cleared $deleted notifications older than $days day${if (days == 1) "" else "s"}."
+        }
+    }
+
+    fun clearEverything() {
+        scope.launch {
+            val deleted = clearAll()
+            clearMessage = "Cleared $deleted captured notifications."
         }
     }
 
@@ -791,6 +805,13 @@ private fun NotificationLog(
                     ) {
                         Text("Clear")
                     }
+                }
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = ::clearEverything,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8F3324)),
+                ) {
+                    Text("Clear all captured messages")
                 }
                 clearMessage?.let { Text(it, color = Color(0xFF61706A)) }
             }

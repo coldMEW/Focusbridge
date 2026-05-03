@@ -38,6 +38,9 @@ hex = "0.4"
 rusqlite = { version = "0.31", features = ["bundled"] }
 focusbridge-core = { path = "../core" }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

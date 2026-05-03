@@ -20,6 +20,12 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Desktop QR now advertises multiple local IPv4 candidates, refreshes when the desktop window regains focus or the QR is near expiry, and includes a manual `Refresh QR / network` button for Wi-Fi/hotspot changes.
 - The committed `image.png` logo is now used in Android launcher resources, Android app header, desktop sidebar, and desktop PNG bundle/tray assets.
 - Both desktop and Android now support clearing old notification history for 1 day, 7 days, 1 month, or custom day counts. Desktop clears SQLite through Tauri; Android clears Room locally.
+- Current bug-fix slice adds explicit `Clear all` controls on desktop and Android, and age-based clearing now checks the earlier of phone timestamp and receive timestamp so old phone notifications are not kept just because they arrived recently.
+- Desktop Study lane selection now also enables and persists Study Mode instead of only changing the visible filter.
+- Desktop icons were regenerated from `image.png` with `pnpm tauri icon ..\image.png`, including the Windows `.ico`; tray template rendering was disabled so the tray icon is not forced into a black mask.
+- Windows desktop notification identity now sets an explicit AppUserModelID at startup. Packaged/installed builds should identify as FocusBridge; dev launches can still be affected by Windows notification cache or terminal-launched process identity.
+- Android Pair screen is scrollable so CameraX QR scanning no longer squeezes the manual pairing field/save button on short screens, and the mobile header constrains the logo/name row to one line.
+- Added `docs/security-and-rules-next-plan.md` for the next production slice: local WSS with certificate pinning, message-level encrypted envelopes, phone app inventory, desktop-managed app/category/rule controls, and relay-safe encrypted sync.
 - Desktop local pairing now sends explicit `AUTH_OK` / `AUTH_FAILED` WebSocket messages so Android marks the device green only after the desktop accepts the pairing key.
 - Desktop now has native OS notification popups for phone notifications when the main window is hidden, minimized, or unfocused; masked notifications stay masked in the popup body.
 - Desktop close behavior is now guarded: clicking the window X opens an in-app prompt with `Run in tray`, `Quit FocusBridge`, and `Cancel`, so background sync is preserved unless the user intentionally quits.
@@ -47,7 +53,7 @@ Recent connectivity progress:
 - Android can turn cloud QR payloads into relay WebSocket endpoints with the playbook `phone` role, and the relay accepts both legacy `android` and playbook `phone` roles.
 - Android `SyncEngine` now waits for the WebSocket `CONNECTED` state before flushing queued notifications, reducing the risk of losing the first pending notifications after pairing or service startup.
 
-- Desktop local WebSocket is currently plain WS for MVP wiring. WSS with persisted self-signed certs and Android certificate pinning still needs hardening.
+- Desktop local WebSocket is currently plain WS for MVP wiring. WSS with persisted self-signed certs, Android certificate pinning, and message-level encryption are designed in `docs/security-and-rules-next-plan.md` but not implemented yet.
 - Desktop notification list now has code to hydrate existing SQLite notifications on launch, but the latest UI slice still needs verification before it is committed.
 - Android QR scanning now exists in the Pair tab, but still needs physical-device verification against the live desktop QR on the same Wi-Fi.
 - Cloud relay endpoint construction now exists on Android, but desktop still needs relay registration/client mode and the QR generator still emits local-only payloads until relay settings are wired.

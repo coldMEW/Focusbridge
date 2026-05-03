@@ -27,3 +27,8 @@ pub fn clear_notifications_older_than(
 ) -> Result<usize, String> {
     store::clear_notifications_older_than(&state.db_path, cutoff_ms).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn clear_all_notifications(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    store::clear_all_notifications(&state.db_path).map_err(|e| e.to_string())
+}

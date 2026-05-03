@@ -11,6 +11,7 @@ export default function SettingsPanel() {
   const setTwoFaMode = useSettingsStore((s) => s.setTwoFaMode);
   const priorityKeywords = useSettingsStore((s) => s.priorityKeywords);
   const syncMode = useSettingsStore((s) => s.syncMode);
+  const clearAll = useNotificationStore((s) => s.clear);
   const clearOlderThan = useNotificationStore((s) => s.clearOlderThan);
 
   const clearHistory = async (days: number) => {
@@ -19,6 +20,16 @@ export default function SettingsPanel() {
       const deleted = await invoke<number>("clear_notifications_older_than", { cutoffMs });
       clearOlderThan(cutoffMs);
       setClearMessage(`Cleared ${deleted} notifications older than ${days} day${days === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setClearMessage(`Clear failed: ${String(error)}`);
+    }
+  };
+
+  const clearEverything = async () => {
+    try {
+      const deleted = await invoke<number>("clear_all_notifications");
+      clearAll();
+      setClearMessage(`Cleared ${deleted} desktop notifications.`);
     } catch (error) {
       setClearMessage(`Clear failed: ${String(error)}`);
     }
@@ -83,6 +94,12 @@ export default function SettingsPanel() {
             </button>
           ))}
         </div>
+        <button
+          onClick={() => void clearEverything()}
+          className="mt-3 w-full rounded-full border border-[#f0b8aa] bg-[#fff0eb] px-4 py-2 text-sm font-semibold text-[#8f3324] transition hover:-translate-y-0.5 hover:bg-[#ffe4dc] active:translate-y-0 active:scale-95"
+        >
+          Clear all desktop messages
+        </button>
         <div className="mt-3 flex gap-2">
           <input
             value={customDays}

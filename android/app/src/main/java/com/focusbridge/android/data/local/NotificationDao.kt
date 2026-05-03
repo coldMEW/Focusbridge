@@ -20,6 +20,9 @@ interface NotificationDao {
     @Query("UPDATE notifications SET status = :status WHERE id = :id")
     suspend fun setStatus(id: String, status: String)
 
-    @Query("DELETE FROM notifications WHERE receivedAt < :cutoffMs")
+    @Query("DELETE FROM notifications WHERE min(timestamp, receivedAt) < :cutoffMs")
     suspend fun deleteOlderThan(cutoffMs: Long): Int
+
+    @Query("DELETE FROM notifications")
+    suspend fun deleteAll(): Int
 }

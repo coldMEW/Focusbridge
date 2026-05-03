@@ -19,4 +19,6 @@ class NotificationRepository @Inject constructor(
     suspend fun pending(): List<NotificationEntity> = dao.pending()
 
     suspend fun clearOlderThan(cutoffMs: Long): Int = dao.deleteOlderThan(cutoffMs)
+
+    suspend fun clearAll(): Int = dao.deleteAll()
 }

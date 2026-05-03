@@ -27,6 +27,16 @@ interface NativeNotificationRow {
   content_hidden: number;
 }
 
+interface NativeSettingsSnapshot {
+  study_mode_enabled?: boolean;
+  two_fa_mode_enabled?: boolean;
+  blocked_apps?: string[];
+  priority_apps?: string[];
+  favorite_contacts?: string[];
+  priority_keywords?: string[];
+  sync_mode?: "LOCAL" | "CLOUD";
+}
+
 function fromNative(row: NativeNotificationRow): Notification {
   return {
     id: row.id,
@@ -51,12 +61,28 @@ export default function App() {
   const remove = useNotificationStore((s) => s.remove);
   const replaceAll = useNotificationStore((s) => s.replaceAll);
   const notifications = useNotificationStore((s) => s.items);
+  const replaceSettings = useSettingsStore((s) => s.replace);
 
   useEffect(() => {
     invoke<NativeNotificationRow[]>("list_notifications", { limit: 150 })
       .then((rows) => replaceAll(rows.map(fromNative)))
       .catch((error) => console.warn("Unable to hydrate notifications", error));
-  }, [replaceAll]);
+    invoke<NativeSettingsSnapshot>("get_settings")
+      .then((settings) =>
+        replaceSettings({
+          studyModeEnabled: Boolean(settings.study_mode_enabled),
+          twoFaModeEnabled: Boolean(settings.two_fa_mode_enabled),
+          blockedApps: settings.blocked_apps ?? [],
+          priorityApps: settings.priority_apps ?? [],
+          favoriteContacts: settings.favorite_contacts ?? [],
+          priorityKeywords: settings.priority_keywords?.length
+            ? settings.priority_keywords
+            : ["urgent", "asap", "emergency"],
+          syncMode: settings.sync_mode ?? "LOCAL",
+        }),
+      )
+      .catch((error) => console.warn("Unable to hydrate settings", error));
+  }, [replaceAll, replaceSettings]);
 
   useEffect(() => {
     const unlisten = Promise.all([

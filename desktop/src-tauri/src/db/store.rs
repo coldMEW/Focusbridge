@@ -97,10 +97,16 @@ pub fn dismiss_notification(db_path: &Path, id: &str) -> Result<()> {
 pub fn clear_notifications_older_than(db_path: &Path, cutoff_ms: i64) -> Result<usize> {
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
     conn.execute(
-        "DELETE FROM notifications WHERE received_at < ?1",
+        "DELETE FROM notifications WHERE MIN(timestamp, received_at) < ?1",
         params![cutoff_ms],
     )
     .context("clear old notifications")
+}
+
+pub fn clear_all_notifications(db_path: &Path) -> Result<usize> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.execute("DELETE FROM notifications", [])
+        .context("clear all notifications")
 }
 
 pub fn set_setting(db_path: &Path, key: &str, value: &str) -> Result<()> {
