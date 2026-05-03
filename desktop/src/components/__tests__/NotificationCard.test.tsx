@@ -22,7 +22,7 @@ function make(overrides: Partial<Notification> = {}): Notification {
 describe("NotificationCard", () => {
   it("renders sender and app", () => {
     render(<NotificationCard notification={make()} onIgnore={() => {}} onImportant={() => {}} />);
-    expect(screen.getByText("[WhatsApp]")).toBeInTheDocument();
+    expect(screen.getByText("WhatsApp")).toBeInTheDocument();
     expect(screen.getByText("John")).toBeInTheDocument();
   });
 
@@ -43,7 +43,7 @@ describe("NotificationCard", () => {
         onImportant={() => {}}
       />,
     );
-    expect(screen.getByText("New message")).toBeInTheDocument();
+    expect(screen.getByText("New private message")).toBeInTheDocument();
   });
 
   it("shows 2FA badge for high priority", () => {
@@ -54,6 +54,6 @@ describe("NotificationCard", () => {
         onImportant={() => {}}
       />,
     );
-    expect(screen.getByText("2FA")).toBeInTheDocument();
+    expect(screen.getByText("security")).toBeInTheDocument();
   });
 });

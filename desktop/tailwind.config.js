@@ -6,32 +6,26 @@ export default {
     extend: {
       colors: {
         bg: {
-          primary: "#1A1A1A",
-          secondary: "#2D2D2D",
-          surface: "#363636",
+          primary: "#f4efe4",
+          secondary: "#fffaf0",
+          surface: "#ece3d1",
         },
         text: {
-          primary: "#E0E0E0",
-          secondary: "#888888",
-          muted: "#555555",
+          primary: "#17221e",
+          secondary: "#61706a",
+          muted: "#9a8f7c",
         },
         border: {
-          subtle: "#404040",
-          hover: "#505050",
+          subtle: "rgba(40, 54, 48, 0.14)",
+          hover: "rgba(40, 54, 48, 0.34)",
         },
         accent: {
-          study: "#6B7B8D",
-          important: "#A0A0A0",
+          study: "#3f7f70",
+          important: "#c97b38",
         },
       },
       fontFamily: {
-        sans: [
-          "-apple-system",
-          "BlinkMacSystemFont",
-          "Segoe UI",
-          "Roboto",
-          "sans-serif",
-        ],
+        sans: ["Aptos", "Gill Sans", "Trebuchet MS", "sans-serif"],
       },
     },
   },

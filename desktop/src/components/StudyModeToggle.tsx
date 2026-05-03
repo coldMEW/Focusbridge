@@ -8,13 +8,13 @@ export default function StudyModeToggle() {
       data-testid="study-toggle"
       aria-pressed={on}
       className={
-        "rounded px-2 py-1 text-xs " +
+        "rounded-full px-4 py-2 text-xs font-semibold transition-all " +
         (on
-          ? "border border-accent-study text-accent-study"
-          : "border border-border-subtle text-text-secondary")
+          ? "bg-accent-study text-white shadow-soft"
+          : "border border-border-subtle bg-bg-secondary text-text-secondary hover:text-text-primary")
       }
     >
-      Study {on ? "ON" : "OFF"}
+      {on ? "Study mode on" : "Study mode"}
     </button>
   );
 }

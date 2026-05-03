@@ -25,11 +25,13 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Installed Gradle 8.7 in `C:\tmp\gradle-8.7`, generated `android/gradlew(.bat)`, installed Android SDK command-line tools/platform 34/build-tools 34.0.0/platform-tools in `C:\tmp\android-sdk`, and configured ignored `android/local.properties`.
 - Added GitHub Actions for Android, desktop, and relay CI.
 - Fixed initial CI failures by committing Rust lockfiles, making `android/gradlew` executable for Linux runners, using portable Rust `stable` toolchains, updating GitHub Actions to current Node-24-compatible major versions, disabling desktop matrix fail-fast, and running `pnpm build` before desktop `cargo check --locked` so Tauri has `frontendDist`.
+- Current working tree has an in-progress UI/product polish slice: desktop now has a warm glass “quiet command” layout, animated red/green connection blinker, DB hydration command for persisted notifications, DB-backed triage actions, richer pairing/settings panels, and Android has a tabbed Home/Pair/Rules/Log Compose shell with a live WebSocket connection blinker.
+- Added `docs/phase-audit.md` as the current source of truth for which playbook phases are complete, partial, or still blocked before production.
 
 ## Known Gaps
 
 - Desktop local WebSocket is currently plain WS for MVP wiring. WSS with persisted self-signed certs and Android certificate pinning still needs hardening.
-- Desktop notification list loads live events, but it does not yet hydrate existing SQLite notifications on launch.
+- Desktop notification list now has code to hydrate existing SQLite notifications on launch, but the latest UI slice still needs verification before it is committed.
 - Android QR scanning is currently manual payload paste; CameraX/ZXing camera scanning still needs UI integration.
 - Android certificate pinning is represented by `CertificateManager`, but the WebSocket client is plain WS until desktop WSS hardening is done.
 - Local verification previously hit environment permission blockers: Cargo could not open stale `target/.cargo-lock`, and Vitest/esbuild could not spawn in the sandbox.
@@ -41,7 +43,7 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 ## Next Best Tasks
 
 1. Add QR camera scanning with ZXing/CameraX or another scanner integration.
-2. Hydrate desktop notifications from SQLite on launch.
+2. Verify and commit the current desktop/mobile UI polish slice once `pnpm tsc --noEmit`, `pnpm vitest run`, `pnpm build`, `cargo check --locked`, and `./gradlew.bat test lint assembleDebug` can run again.
 3. Harden local desktop transport from WS to WSS with persisted certs and Android pinning.
 4. Add desktop-to-phone action handling for important/ignored/study-mode toggles.
 5. Test real phone-to-desktop pairing on the same Wi-Fi and record results in `docs/integration-log.md`.

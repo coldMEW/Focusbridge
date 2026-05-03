@@ -52,6 +52,7 @@ pub fn run() {
             commands::pairing_cmd::consume_pairing,
             commands::settings_cmd::get_settings,
             commands::settings_cmd::set_study_mode,
+            commands::notification_cmd::list_notifications,
             commands::notification_cmd::mark_important,
             commands::notification_cmd::mark_ignored,
         ])

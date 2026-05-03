@@ -1,11 +1,11 @@
 import { useSettingsStore } from "../stores/settingsStore";
 import type { FilterKind } from "../types";
 
-const ITEMS: { key: FilterKind; label: string }[] = [
-  { key: "ALL", label: "All" },
-  { key: "IMPORTANT", label: "Important" },
-  { key: "STUDY", label: "Study" },
-  { key: "TWOFA", label: "2FA" },
+const ITEMS: { key: FilterKind; label: string; hint: string }[] = [
+  { key: "ALL", label: "Inbox", hint: "Everything not dismissed" },
+  { key: "IMPORTANT", label: "Priority", hint: "Pinned and urgent" },
+  { key: "STUDY", label: "Study lane", hint: "Low-interruption mode" },
+  { key: "TWOFA", label: "Security", hint: "Codes and sign-ins" },
 ];
 
 export default function FilterPanel() {
@@ -14,31 +14,45 @@ export default function FilterPanel() {
   const blocked = useSettingsStore((s) => s.blockedApps);
 
   return (
-    <nav className="p-3 text-sm">
-      <ul className="space-y-1">
+    <nav className="flex-1 text-sm">
+      <ul className="space-y-2">
         {ITEMS.map((it) => (
           <li key={it.key}>
             <button
               onClick={() => setFilter(it.key)}
               className={
-                "w-full rounded px-2 py-1 text-left " +
+                "w-full rounded-2xl px-3 py-3 text-left transition-all " +
                 (active === it.key
-                  ? "bg-bg-secondary text-text-primary"
-                  : "text-text-secondary hover:text-text-primary")
+                  ? "bg-text-primary text-bg-primary shadow-soft"
+                  : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary")
               }
             >
-              {it.label}
+              <span className="block font-semibold">{it.label}</span>
+              <span
+                className={
+                  "mt-0.5 block text-xs " +
+                  (active === it.key ? "text-bg-secondary" : "text-text-muted")
+                }
+              >
+                {it.hint}
+              </span>
             </button>
           </li>
         ))}
       </ul>
 
-      <hr className="my-3 border-border-subtle" />
-      <div className="text-xs uppercase tracking-wide text-text-muted">Blocked</div>
-      <ul className="mt-1 space-y-1 text-xs text-text-secondary">
-        {blocked.length === 0 && <li className="text-text-muted">None</li>}
+      <hr className="my-5 border-border-subtle" />
+      <div className="text-xs uppercase tracking-[0.22em] text-text-muted">Muted apps</div>
+      <ul className="mt-3 space-y-2 text-xs text-text-secondary">
+        {blocked.length === 0 && (
+          <li className="rounded-2xl bg-bg-secondary/70 px-3 py-2 text-text-muted">
+            No blocked apps yet
+          </li>
+        )}
         {blocked.map((pkg) => (
-          <li key={pkg}>{pkg}</li>
+          <li key={pkg} className="rounded-2xl bg-bg-secondary px-3 py-2">
+            {pkg}
+          </li>
         ))}
       </ul>
     </nav>

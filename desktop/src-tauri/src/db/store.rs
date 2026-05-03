@@ -56,6 +56,40 @@ pub fn mark_status(db_path: &Path, id: &str, status: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn list_notifications(db_path: &Path, limit: i64) -> Result<Vec<NotificationRow>> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT
+                id, app_name, package_name, sender, message, timestamp, received_at, status, priority, content_hidden
+             FROM notifications
+             WHERE status != 'READ'
+             ORDER BY timestamp DESC, received_at DESC
+             LIMIT ?1",
+        )
+        .context("prepare notification list")?;
+
+    let rows = stmt
+        .query_map(params![limit.clamp(1, 500)], |row| {
+            Ok(NotificationRow {
+                id: row.get(0)?,
+                app_name: row.get(1)?,
+                package_name: row.get(2)?,
+                sender: row.get(3)?,
+                message: row.get(4)?,
+                timestamp: row.get(5)?,
+                received_at: row.get(6)?,
+                status: row.get(7)?,
+                priority: row.get(8)?,
+                content_hidden: row.get(9)?,
+            })
+        })
+        .context("query notifications")?;
+
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect notifications")
+}
+
 pub fn dismiss_notification(db_path: &Path, id: &str) -> Result<()> {
     mark_status(db_path, id, "READ")
 }
