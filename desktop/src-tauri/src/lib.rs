@@ -25,11 +25,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:focusbridge.db", db::migrations::list())
-                .build(),
-        )
         .setup(|app| {
             let handle = app.handle().clone();
             let app_data_dir = app

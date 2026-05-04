@@ -8,6 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tauri::{AppHandle, Emitter};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 use tokio_tungstenite::accept_async;
 use tracing::{error, info, warn};
 
@@ -46,10 +47,27 @@ async fn handle_connection(
     app: AppHandle,
 ) -> Result<()> {
     let mut ws = accept_async(stream).await.context("accept websocket")?;
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
     app.emit("focusbridge://connection", "CONNECTING")?;
 
-    while let Some(msg) = ws.next().await {
-        let msg = msg.context("read websocket message")?;
+    loop {
+        let msg = tokio::select! {
+            outbound = outbound_rx.recv() => {
+                let Some(outbound) = outbound else {
+                    break;
+                };
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(outbound))
+                    .await
+                    .context("send outbound websocket message")?;
+                continue;
+            }
+            inbound = ws.next() => {
+                let Some(inbound) = inbound else {
+                    break;
+                };
+                inbound.context("read websocket message")?
+            }
+        };
         if !msg.is_text() {
             continue;
         }
@@ -64,11 +82,15 @@ async fn handle_connection(
         match handle_envelope(&envelope, &expected_key) {
             IncomingDecision::AuthAccepted => {
                 info!(peer = %peer, "phone authenticated");
+                state.set_phone_sender(outbound_tx.clone());
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
                     r#"{"version":1,"type":"AUTH_OK","payload":{}}"#.into(),
                 ))
                 .await
                 .context("send auth ok")?;
+                if let Ok(message) = store::rules_update_envelope(&state.db_path) {
+                    let _ = state.send_to_phone(message);
+                }
                 app.emit("focusbridge://connection", "CONNECTED")?;
             }
             IncomingDecision::AuthFailed(reason) => {
@@ -121,6 +143,7 @@ async fn handle_connection(
         }
     }
 
+    state.clear_phone_sender();
     app.emit("focusbridge://connection", "DISCONNECTED")?;
     Ok(())
 }

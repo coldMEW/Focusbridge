@@ -6,6 +6,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 
@@ -56,6 +57,23 @@ data class AppInventoryItem(
 @Serializable
 data class AppInventoryPayload(
     val apps: List<AppInventoryItem>,
+)
+
+@Serializable
+data class AppRuleUpdate(
+    val packageName: String,
+    val muted: Boolean = false,
+    val priority: Boolean = false,
+    val studySafe: Boolean = false,
+)
+
+@Serializable
+data class RulesUpdatePayload(
+    val version: Int = 1,
+    val appRules: List<AppRuleUpdate> = emptyList(),
+    val priorityKeywords: List<String> = emptyList(),
+    val blockedKeywords: List<String> = emptyList(),
+    val favoriteContacts: List<String> = emptyList(),
 )
 
 object Protocol {
@@ -113,6 +131,24 @@ object Protocol {
                     AppInventoryPayload.serializer(),
                     AppInventoryPayload(apps),
                 ),
+            ),
+        )
+
+    fun decodeEnvelope(text: String): Envelope =
+        json.decodeFromString(Envelope.serializer(), text)
+
+    fun decodeRulesUpdate(payload: JsonElement): RulesUpdatePayload =
+        json.decodeFromJsonElement(RulesUpdatePayload.serializer(), payload)
+
+    fun rulesAck(appliedCount: Int): String =
+        json.encodeToString(
+            Envelope.serializer(),
+            Envelope(
+                type = MessageType.RULES_ACK,
+                payload = buildJsonObject {
+                    put("applied", true)
+                    put("appliedCount", appliedCount)
+                },
             ),
         )
 }

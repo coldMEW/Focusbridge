@@ -4,12 +4,13 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [NotificationEntity::class, PairingEntity::class, ConfigEntity::class],
-    version = 2,
+    entities = [NotificationEntity::class, PairingEntity::class, ConfigEntity::class, AppRuleEntity::class],
+    version = 3,
     exportSchema = false,
 )
 abstract class FocusBridgeDatabase : RoomDatabase() {
     abstract fun notifications(): NotificationDao
     abstract fun pairings(): PairingDao
     abstract fun config(): ConfigDao
+    abstract fun appRules(): AppRuleDao
 }

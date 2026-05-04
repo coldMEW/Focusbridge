@@ -14,6 +14,10 @@ pub fn set_app_rule(
     enabled: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<AppRuleRow, String> {
-    store::set_app_rule_flag(&state.db_path, &package_name, &flag, enabled)
-        .map_err(|e| e.to_string())
+    let updated = store::set_app_rule_flag(&state.db_path, &package_name, &flag, enabled)
+        .map_err(|e| e.to_string())?;
+    if let Ok(message) = store::rules_update_envelope(&state.db_path) {
+        let _ = state.send_to_phone(message);
+    }
+    Ok(updated)
 }

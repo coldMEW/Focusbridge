@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::Path;
 
 use super::models::{AppRuleRow, NotificationRow};
@@ -100,6 +100,35 @@ pub fn set_app_rule_flag(
     )
     .context("update app rule flag")?;
     get_app_rule(&conn, package_name)
+}
+
+pub fn rules_update_envelope(db_path: &Path) -> Result<String> {
+    let app_rules: Vec<Value> = list_app_rules(db_path)?
+        .into_iter()
+        .map(|rule| {
+            json!({
+                "packageName": rule.package_name,
+                "muted": rule.muted != 0,
+                "priority": rule.priority != 0,
+                "studySafe": rule.study_safe != 0,
+            })
+        })
+        .collect();
+
+    let payload = json!({
+        "version": 1,
+        "appRules": app_rules,
+        "priorityKeywords": csv_setting(db_path, "priority_keywords")?,
+        "blockedKeywords": csv_setting(db_path, "blocked_keywords")?,
+        "favoriteContacts": csv_setting(db_path, "favorite_contacts")?,
+    });
+
+    serde_json::to_string(&json!({
+        "version": 1,
+        "type": "RULES_UPDATE",
+        "payload": payload,
+    }))
+    .context("serialize rules update envelope")
 }
 
 pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRuleRow>> {
@@ -233,6 +262,16 @@ pub fn get_setting(db_path: &Path, key: &str) -> Result<Option<String>> {
     )
     .optional()
     .context("get setting")
+}
+
+fn csv_setting(db_path: &Path, key: &str) -> Result<Vec<String>> {
+    Ok(get_setting(db_path, key)?
+        .unwrap_or_default()
+        .split([',', '\n'])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 pub fn save_pairing(

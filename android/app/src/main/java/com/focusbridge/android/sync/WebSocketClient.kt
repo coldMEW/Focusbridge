@@ -1,6 +1,13 @@
 package com.focusbridge.android.sync
 
+import com.focusbridge.android.data.local.AppRuleEntity
 import com.focusbridge.android.data.local.PairingEntity
+import com.focusbridge.android.data.repository.AppRuleRepository
+import com.focusbridge.android.data.repository.ConfigRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
@@ -15,10 +22,13 @@ import javax.inject.Singleton
 class WebSocketClient @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val appInventoryProvider: AppInventoryProvider,
+    private val appRules: AppRuleRepository,
+    private val config: ConfigRepository,
 ) {
     private var socket: WebSocket? = null
     @Volatile private var connectionSerial = 0
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val state: StateFlow<ConnectionState> = _state
 
     fun connect(
@@ -40,12 +50,15 @@ class WebSocketClient @Inject constructor(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    when {
-                        text.contains("\"AUTH_OK\"") -> {
+                    val envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return
+                    when (envelope.type) {
+                        MessageType.AUTH_OK -> {
                             updateState(serial, ConnectionState.CONNECTED)
                             webSocket.send(Protocol.appInventory(appInventoryProvider.launchableApps()))
                         }
-                        text.contains("\"AUTH_FAILED\"") -> updateState(serial, ConnectionState.DISCONNECTED)
+                        MessageType.AUTH_FAILED -> updateState(serial, ConnectionState.DISCONNECTED)
+                        MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope)
+                        else -> Unit
                     }
                 }
 
@@ -74,6 +87,27 @@ class WebSocketClient @Inject constructor(
     private fun updateState(serial: Int, state: ConnectionState) {
         if (serial == connectionSerial) {
             _state.value = state
+        }
+    }
+
+    private fun applyRulesUpdate(webSocket: WebSocket, envelope: Envelope) {
+        scope.launch {
+            val update = Protocol.decodeRulesUpdate(envelope.payload)
+            appRules.replaceFromDesktop(
+                update.appRules.map { rule ->
+                    AppRuleEntity(
+                        packageName = rule.packageName,
+                        muted = rule.muted,
+                        priority = rule.priority,
+                        studySafe = rule.studySafe,
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                },
+            )
+            config.set("priority_keywords", update.priorityKeywords.joinToString(","))
+            config.set("blocked_keywords", update.blockedKeywords.joinToString(","))
+            config.set("favorite_contacts", update.favoriteContacts.joinToString(","))
+            webSocket.send(Protocol.rulesAck(update.appRules.size))
         }
     }
 }
