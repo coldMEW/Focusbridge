@@ -20,7 +20,8 @@ mod tls;
 
 use crate::account_store::{AccountStore, LoginError, RegisterError};
 use crate::auth::{
-    create_session_token, parse_role, verify_pairing_key, verify_session_token, AuthError, Role,
+    create_session_token, normalize_email, parse_role, verify_pairing_key, verify_session_token,
+    AuthError, Role,
 };
 use crate::config::Config;
 use crate::metrics::Metrics;
@@ -33,6 +34,9 @@ struct AppState {
     accounts: Arc<AccountStore>,
     auth_token_secret: String,
     google_client_id: Option<String>,
+    resend_api_key: Option<String>,
+    otp_email_from: Option<String>,
+    pending_otps: dashmap::DashMap<String, PendingOtp>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +54,26 @@ struct AccountRegisterBody {
 struct AccountLoginBody {
     email: String,
     password: String,
+}
+
+#[derive(Clone)]
+struct PendingOtp {
+    password: String,
+    code: String,
+    expires_at_epoch_secs: u64,
+}
+
+#[derive(Deserialize)]
+struct OtpStartBody {
+    email: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct OtpVerifyBody {
+    email: String,
+    password: String,
+    otp: String,
 }
 
 #[derive(Deserialize)]
@@ -138,6 +162,74 @@ async fn auth_login(
         Ok(user) => HttpResponse::Ok().json(auth_response(&state, &user.id, &user.email)),
         Err(LoginError::InvalidCredentials) => {
             HttpResponse::Unauthorized().body("invalid email or password")
+        }
+    }
+}
+
+#[post("/auth/otp/start")]
+async fn auth_otp_start(
+    state: web::Data<AppState>,
+    body: web::Json<OtpStartBody>,
+) -> impl Responder {
+    let email = match normalize_email(&body.email) {
+        Ok(email) => email,
+        Err(_) => return HttpResponse::BadRequest().body("invalid email"),
+    };
+    if body.password.len() < 10 {
+        return HttpResponse::BadRequest().body("password must be at least 10 characters");
+    }
+    let code = format!("{:06}", rand::random::<u32>() % 1_000_000);
+    let expires_at = now_epoch_secs() + 10 * 60;
+    if let Err(err) = send_otp_email(&state, &email, &code).await {
+        warn!(error = %err, "otp email send failed");
+        return HttpResponse::ServiceUnavailable().body(err);
+    }
+    state.pending_otps.insert(
+        email.clone(),
+        PendingOtp {
+            password: body.password.clone(),
+            code,
+            expires_at_epoch_secs: expires_at,
+        },
+    );
+    HttpResponse::Ok().json(serde_json::json!({ "email": email, "expiresInSeconds": 600 }))
+}
+
+#[post("/auth/otp/verify")]
+async fn auth_otp_verify(
+    state: web::Data<AppState>,
+    body: web::Json<OtpVerifyBody>,
+) -> impl Responder {
+    let email = match normalize_email(&body.email) {
+        Ok(email) => email,
+        Err(_) => return HttpResponse::BadRequest().body("invalid email"),
+    };
+    let Some((_, pending)) = state.pending_otps.remove(&email) else {
+        return HttpResponse::Unauthorized().body("otp is missing or expired");
+    };
+    if pending.expires_at_epoch_secs < now_epoch_secs() {
+        return HttpResponse::Unauthorized().body("otp is expired");
+    }
+    if pending.password != body.password || pending.code != body.otp.trim() {
+        return HttpResponse::Unauthorized().body("invalid otp");
+    }
+    match state
+        .accounts
+        .register_password(&email, &body.password, now_epoch_secs())
+    {
+        Ok(user) => HttpResponse::Ok().json(auth_response(&state, &user.id, &user.email)),
+        Err(RegisterError::AlreadyExists) => {
+            match state.accounts.login_password(&email, &body.password) {
+                Ok(user) => HttpResponse::Ok().json(auth_response(&state, &user.id, &user.email)),
+                Err(_) => HttpResponse::Conflict().body("account already exists"),
+            }
+        }
+        Err(RegisterError::Auth(AuthError::WeakPassword)) => {
+            HttpResponse::BadRequest().body("password must be at least 10 characters")
+        }
+        Err(err) => {
+            warn!(error = %err, "otp account registration failed");
+            HttpResponse::InternalServerError().body("otp registration failed")
         }
     }
 }
@@ -350,6 +442,9 @@ async fn main() -> Result<()> {
         accounts: Arc::new(AccountStore::load(&cfg.auth_store_path)?),
         auth_token_secret,
         google_client_id: cfg.google_client_id.clone(),
+        resend_api_key: cfg.resend_api_key.clone(),
+        otp_email_from: cfg.otp_email_from.clone(),
+        pending_otps: dashmap::DashMap::new(),
     });
 
     let server_builder = HttpServer::new({
@@ -360,6 +455,8 @@ async fn main() -> Result<()> {
                 .service(health)
                 .service(auth_register)
                 .service(auth_login)
+                .service(auth_otp_start)
+                .service(auth_otp_verify)
                 .service(auth_google)
                 .service(register)
                 .service(metrics_endpoint)
@@ -409,6 +506,37 @@ fn auth_response(state: &AppState, user_id: &str, email: &str) -> AuthResponse {
             30 * 24 * 60 * 60,
         ),
     }
+}
+
+async fn send_otp_email(
+    state: &AppState,
+    email: &str,
+    code: &str,
+) -> std::result::Result<(), String> {
+    let Some(api_key) = &state.resend_api_key else {
+        return Err("OTP email is not configured: set FOCUSBRIDGE_RESEND_API_KEY".into());
+    };
+    let Some(from) = &state.otp_email_from else {
+        return Err("OTP email is not configured: set FOCUSBRIDGE_OTP_EMAIL_FROM".into());
+    };
+    let response = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(api_key)
+        .json(&serde_json::json!({
+            "from": from,
+            "to": [email],
+            "subject": "Your FocusBridge verification code",
+            "text": format!("Your FocusBridge verification code is {code}. It expires in 10 minutes.")
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("send otp email request failed: {e}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("otp email provider failed ({status}): {body}"));
+    }
+    Ok(())
 }
 
 fn now_epoch_secs() -> u64 {

@@ -76,15 +76,15 @@ fn local_ipv4_candidates() -> Vec<String> {
     let mut candidates = BTreeSet::new();
 
     if let Some(ip) = route_ipv4() {
-        candidates.insert(format!("wss://{ip}:9173"));
+        candidates.insert(format!("ws://{ip}:9173"));
     }
 
     for ip in command_ipv4_candidates() {
-        candidates.insert(format!("wss://{ip}:9173"));
+        candidates.insert(format!("ws://{ip}:9173"));
     }
 
     if candidates.is_empty() {
-        candidates.insert("wss://127.0.0.1:9173".to_string());
+        candidates.insert("ws://127.0.0.1:9173".to_string());
     }
 
     candidates.into_iter().collect()
@@ -92,14 +92,27 @@ fn local_ipv4_candidates() -> Vec<String> {
 
 #[tauri::command]
 pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput, String> {
-    let device_id = Uuid::new_v4().to_string();
-    let pairing_key = random_hex_256();
+    let now = now_millis();
+    let existing = state
+        .current_pairing()
+        .filter(|session| session.expires_at > now + 30_000);
+    let device_id = existing
+        .as_ref()
+        .map(|session| session.device_id.clone())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let pairing_key = existing
+        .as_ref()
+        .map(|session| session.pairing_key.clone())
+        .unwrap_or_else(random_hex_256);
     let endpoint_candidates = local_ipv4_candidates();
     let endpoint = endpoint_candidates
         .first()
         .cloned()
-        .unwrap_or_else(|| "127.0.0.1:9173".to_string());
-    let expires_at = now_millis() + 5 * 60 * 1000;
+        .unwrap_or_else(|| "ws://127.0.0.1:9173".to_string());
+    let expires_at = existing
+        .as_ref()
+        .map(|session| session.expires_at)
+        .unwrap_or_else(|| now + 5 * 60 * 1000);
     let payload = QrPayload {
         v: 1,
         mode: "local".into(),

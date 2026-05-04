@@ -135,7 +135,9 @@ export default function App() {
     IMPORTANT: "Priority lane",
     STUDY: "Study-safe feed",
     TWOFA: "Security codes",
+    APP_CONTROL: "Phone app control",
   }[activeFilter];
+  const showingAppControl = activeFilter === "APP_CONTROL";
 
   return (
     <AuthGate>
@@ -161,9 +163,6 @@ export default function App() {
             </p>
           </div>
           <FilterPanel />
-          <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
-            <AppRulesPanel />
-          </div>
           <div className="mt-auto rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
             <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
               Device status
@@ -201,7 +200,7 @@ export default function App() {
               </div>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-              <NotificationList />
+              {showingAppControl ? <AppRulesPanel fullPage /> : <NotificationList />}
             </div>
           </section>
 

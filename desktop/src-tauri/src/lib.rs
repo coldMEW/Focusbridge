@@ -51,6 +51,8 @@ pub fn run() {
             commands::auth_cmd::auth_status,
             commands::auth_cmd::auth_register,
             commands::auth_cmd::auth_login,
+            commands::auth_cmd::auth_relay_otp_start,
+            commands::auth_cmd::auth_relay_otp_verify,
             commands::auth_cmd::auth_google_sign_in,
             commands::pairing_cmd::generate_pairing_qr,
             commands::pairing_cmd::consume_pairing,

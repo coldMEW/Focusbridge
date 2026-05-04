@@ -39,7 +39,7 @@ data class QrPairingPayload(
             .filter { it.isNotBlank() }
             .flatMap { candidate ->
                 if (candidate.startsWith("wss://")) {
-                    sequenceOf(candidate, "ws://${candidate.removePrefix("wss://")}")
+                    sequenceOf("ws://${candidate.removePrefix("wss://")}", candidate)
                 } else {
                     sequenceOf(candidate)
                 }
@@ -66,10 +66,11 @@ class PairingManager @Inject constructor(
 
     suspend fun consume(rawQrPayload: String): PairingEntity {
         val payload = json.decodeFromString(QrPairingPayload.serializer(), rawQrPayload)
+        val candidates = payload.syncEndpointCandidates()
         val pairing = PairingEntity(
             deviceId = payload.deviceId,
-            endpoint = payload.syncEndpoint(),
-            endpointCandidates = payload.syncEndpointCandidates().joinToString("|"),
+            endpoint = candidates.firstOrNull() ?: payload.syncEndpoint(),
+            endpointCandidates = candidates.joinToString("|"),
             pairingKey = payload.pairingKey,
             certFingerprint = payload.certFingerprint,
             mode = payload.mode.uppercase(),

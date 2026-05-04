@@ -22,7 +22,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: "Other apps",
 };
 
-export default function AppRulesPanel() {
+export default function AppRulesPanel({ fullPage = false }: { fullPage?: boolean }) {
   const rules = useAppRulesStore((s) => s.items);
   const upsert = useAppRulesStore((s) => s.upsert);
   const setAppRuleLists = useSettingsStore((s) => s.setAppRuleLists);
@@ -67,7 +67,7 @@ export default function AppRulesPanel() {
   const grouped = groupRules(rules);
 
   return (
-    <section className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
+    <section className={`${fullPage ? "" : "mt-5"} rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4`}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
@@ -82,7 +82,7 @@ export default function AppRulesPanel() {
         </span>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <WordEditor
           label="Priority words"
           value={priorityText}
@@ -98,7 +98,7 @@ export default function AppRulesPanel() {
       </div>
       {status && <p className="mt-3 text-xs text-text-muted">{status}</p>}
 
-      <div className="mt-5 max-h-[520px] space-y-5 overflow-y-auto pr-1">
+      <div className={`${fullPage ? "max-h-none" : "max-h-[520px] overflow-y-auto"} mt-5 space-y-5 pr-1`}>
         {rules.length === 0 && (
           <div className="rounded-2xl bg-bg-primary/70 px-3 py-3 text-sm text-text-muted">
             Connect your phone to import its app list.

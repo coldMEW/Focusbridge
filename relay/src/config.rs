@@ -17,6 +17,10 @@ pub struct Config {
     pub auth_token_secret: Option<String>,
     #[serde(default)]
     pub google_client_id: Option<String>,
+    #[serde(default)]
+    pub resend_api_key: Option<String>,
+    #[serde(default)]
+    pub otp_email_from: Option<String>,
 }
 
 impl Config {
@@ -31,6 +35,16 @@ impl Config {
         });
         cfg.google_client_id = cfg.google_client_id.or_else(|| {
             std::env::var("FOCUSBRIDGE_GOOGLE_CLIENT_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
+        cfg.resend_api_key = cfg.resend_api_key.or_else(|| {
+            std::env::var("FOCUSBRIDGE_RESEND_API_KEY")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
+        cfg.otp_email_from = cfg.otp_email_from.or_else(|| {
+            std::env::var("FOCUSBRIDGE_OTP_EMAIL_FROM")
                 .ok()
                 .filter(|v| !v.trim().is_empty())
         });

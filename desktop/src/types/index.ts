@@ -41,7 +41,7 @@ export interface Settings {
   syncMode: "LOCAL" | "CLOUD";
 }
 
-export type FilterKind = "ALL" | "IMPORTANT" | "STUDY" | "TWOFA";
+export type FilterKind = "ALL" | "IMPORTANT" | "STUDY" | "TWOFA" | "APP_CONTROL";
 
 export interface AppRule {
   packageName: string;

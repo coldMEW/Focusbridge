@@ -18,8 +18,13 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [relayUrl, setRelayUrl] = useState("http://127.0.0.1:8443");
   const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState("");
+  const [relayPassword, setRelayPassword] = useState("");
+  const [relayOtp, setRelayOtp] = useState("");
+  const [relayOtpSent, setRelayOtpSent] = useState(false);
+  const [relayBusy, setRelayBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [googleBusy, setGoogleBusy] = useState(false);
+  const [email, setEmail] = useState("");
 
   useEffect(() => {
     invoke<AuthStatus>("auth_status")
@@ -59,6 +64,39 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const requestRelayOtp = async () => {
+    setError(null);
+    setRelayBusy(true);
+    try {
+      await invoke("auth_relay_otp_start", { relayUrl, email, password: relayPassword });
+      setRelayOtpSent(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRelayBusy(false);
+    }
+  };
+
+  const verifyRelayOtp = async () => {
+    setError(null);
+    setRelayBusy(true);
+    try {
+      const result = await invoke<GoogleSignInResult>("auth_relay_otp_verify", {
+        relayUrl,
+        email,
+        password: relayPassword,
+        otp: relayOtp,
+      });
+      setRelayEmail(result.email);
+      setRelayOtp("");
+      setRelayOtpSent(false);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRelayBusy(false);
+    }
+  };
+
   if (configured === null) {
     return <div className="grid min-h-screen place-items-center bg-bg-primary text-text-muted">Loading security...</div>;
   }
@@ -94,6 +132,38 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             className="mt-2 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
             placeholder="http://127.0.0.1:8443"
           />
+          <input
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="mt-3 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+            placeholder="Email for relay account"
+          />
+          <input
+            value={relayPassword}
+            onChange={(event) => setRelayPassword(event.target.value)}
+            type="password"
+            className="mt-3 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+            placeholder="Relay password"
+          />
+          {relayOtpSent && (
+            <input
+              value={relayOtp}
+              onChange={(event) => setRelayOtp(event.target.value)}
+              className="mt-3 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+              placeholder="6-digit email code"
+            />
+          )}
+          <button
+            onClick={() => void (relayOtpSent ? verifyRelayOtp() : requestRelayOtp())}
+            disabled={relayBusy}
+            className="mt-3 w-full rounded-full bg-text-primary px-5 py-3 text-sm font-bold text-bg-primary transition hover:bg-accent-study disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {relayBusy
+              ? "Checking email..."
+              : relayOtpSent
+                ? "Verify code"
+                : "Send email code"}
+          </button>
           <button
             onClick={() => void signInWithGoogle()}
             disabled={googleBusy}

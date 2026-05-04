@@ -6,6 +6,7 @@ const ITEMS: { key: FilterKind; label: string; hint: string }[] = [
   { key: "IMPORTANT", label: "Priority", hint: "Pinned and urgent" },
   { key: "STUDY", label: "Study lane", hint: "Low-interruption mode" },
   { key: "TWOFA", label: "Security", hint: "Codes and sign-ins" },
+  { key: "APP_CONTROL", label: "App Control", hint: "Words, apps, and toggles" },
 ];
 
 export default function FilterPanel() {

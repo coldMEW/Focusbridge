@@ -71,6 +71,13 @@ pub struct GoogleSignInResult {
     pub user_id: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelaySignInResult {
+    pub email: String,
+    pub user_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct GoogleTokenResponse {
     id_token: String,
@@ -82,6 +89,73 @@ struct RelayAuthResponse {
     user_id: String,
     email: String,
     token: String,
+}
+
+#[tauri::command]
+pub async fn auth_relay_otp_start(
+    relay_url: String,
+    email: String,
+    password: String,
+) -> Result<(), String> {
+    let relay_url = normalize_relay_url(&relay_url)?;
+    let response = reqwest::Client::new()
+        .post(format!("{relay_url}/auth/otp/start"))
+        .json(&serde_json::json!({ "email": email, "password": password }))
+        .send()
+        .await
+        .context("send otp start request")
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .context("read otp start response")
+        .map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("otp start failed ({status}): {text}"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_relay_otp_verify(
+    relay_url: String,
+    email: String,
+    password: String,
+    otp: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<RelaySignInResult, String> {
+    let relay_url = normalize_relay_url(&relay_url)?;
+    let response = reqwest::Client::new()
+        .post(format!("{relay_url}/auth/otp/verify"))
+        .json(&serde_json::json!({ "email": email, "password": password, "otp": otp }))
+        .send()
+        .await
+        .context("send otp verify request")
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .context("read otp verify response")
+        .map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("otp verify failed ({status}): {text}"));
+    }
+    let relay: RelayAuthResponse = serde_json::from_str(&text)
+        .context("decode relay otp auth response")
+        .map_err(|e| e.to_string())?;
+    store::set_setting(&state.db_path, "relay_url", &relay_url).map_err(|e| e.to_string())?;
+    store::set_setting(&state.db_path, "relay_auth_token", &relay.token)
+        .map_err(|e| e.to_string())?;
+    store::set_setting(&state.db_path, "relay_auth_email", &relay.email)
+        .map_err(|e| e.to_string())?;
+    store::set_setting(&state.db_path, "relay_auth_user_id", &relay.user_id)
+        .map_err(|e| e.to_string())?;
+    Ok(RelaySignInResult {
+        email: relay.email,
+        user_id: relay.user_id,
+    })
 }
 
 #[tauri::command]

@@ -30,6 +30,7 @@ class WebSocketClient @Inject constructor(
     @Volatile private var connectionSerial = 0
     @Volatile private var activePairingKey: String? = null
     @Volatile private var secureReady: Boolean = false
+    @Volatile private var secureTransport: Boolean = false
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val state: StateFlow<ConnectionState> = _state
@@ -45,11 +46,13 @@ class WebSocketClient @Inject constructor(
         val serial = ++connectionSerial
         activePairingKey = pairing.pairingKey
         secureReady = false
+        secureTransport = false
         _state.value = ConnectionState.CONNECTING
         val rawEndpoint = endpointOverride ?: pairing.endpoint
-        val endpoint = if (rawEndpoint.startsWith("ws")) rawEndpoint else "wss://$rawEndpoint"
+        val endpoint = if (rawEndpoint.startsWith("ws")) rawEndpoint else "ws://$rawEndpoint"
         val request = Request.Builder().url(endpoint).build()
-        val client = if (endpoint.startsWith("wss://") && pairing.certFingerprint.isNotBlank()) {
+        secureTransport = endpoint.startsWith("wss://") && pairing.certFingerprint.isNotBlank()
+        val client = if (secureTransport) {
             okHttpClient.withPinnedCertificate(pairing.certFingerprint)
         } else {
             okHttpClient
@@ -70,7 +73,7 @@ class WebSocketClient @Inject constructor(
                     }
                     when (envelope.type) {
                         MessageType.AUTH_OK -> {
-                            secureReady = true
+                            secureReady = secureTransport
                             updateState(serial, ConnectionState.CONNECTED)
                             webSocket.sendSecure(pairing.pairingKey, Protocol.appInventory(appInventoryProvider.launchableApps()))
                         }
@@ -103,6 +106,7 @@ class WebSocketClient @Inject constructor(
         socket = null
         activePairingKey = null
         secureReady = false
+        secureTransport = false
         if (_state.value != ConnectionState.DISCONNECTED) {
             _state.value = ConnectionState.DISCONNECTED
         }
