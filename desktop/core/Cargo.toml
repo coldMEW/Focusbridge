@@ -18,5 +18,6 @@ hex = "0.4"
 aes-gcm = "0.10"
 hkdf = "0.12"
 rand = "0.8"
+url = "2.5"
 
 [dev-dependencies]

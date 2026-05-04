@@ -42,6 +42,8 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Desktop has a local app-lock gate: first launch creates a PBKDF2-HMAC-SHA256 app password, later launches require unlock before showing notification data/settings.
 - Relay now has durable account auth endpoints: `/auth/register`, `/auth/login`, and `/auth/google`. Password users are stored in a local JSON account store, sessions are signed bearer tokens, and relay `/register` now requires a bearer token before creating a device pair.
 - Google OAuth client configuration is stored locally in ignored `.env.local`; this file is not committed. The relay now loads `.env.local` / `../.env.local` before config parsing, so the Google endpoint actually sees the local client ID and verifies Google ID tokens against it through Google tokeninfo.
+- Desktop now has a user-facing Google OAuth PKCE sign-in flow in the auth gate. It opens Google in the browser, listens on a loopback callback, exchanges the authorization code for a Google ID token, sends that token to relay `/auth/google`, and stores the relay auth session in desktop SQLite settings.
+- Added `.env.example` documenting the local Google client ID / relay token-secret configuration split. The real `.env.local` remains ignored and contains the local Google OAuth client ID.
 - Desktop now has native OS notification popups for phone notifications when the main window is hidden, minimized, or unfocused; masked notifications stay masked in the popup body.
 - Desktop close behavior is now guarded: clicking the window X opens an in-app prompt with `Run in tray`, `Quit FocusBridge`, and `Cancel`, so background sync is preserved unless the user intentionally quits.
 - Android notification processing now reads user-configurable privacy/filter rules from local config: Masked Peek Mode, blocked keywords, priority keywords, and favorite contacts.
@@ -70,7 +72,7 @@ Recent connectivity progress:
 
 - Local WSS, Android certificate pinning, and pairing-key-derived message encryption are implemented for local mode. This is real encrypted envelope protection, but it is not yet an ECDH/PFS handshake.
 - Desktop app controls now sync to Android via `RULES_UPDATE`; Android persists and enforces app, keyword, and contact rules before sending captured notifications.
-- Full user-facing Google sign-in UI is not yet implemented in desktop/mobile; the relay backend endpoint is ready for an ID token once a frontend OAuth/PKCE flow is added.
+- Desktop user-facing Google sign-in is implemented with PKCE. Android Google sign-in is not implemented yet because Android needs a Google OAuth Android client/app signing configuration separate from the desktop loopback client.
 - Desktop notification list now has code to hydrate existing SQLite notifications on launch, but the latest UI slice still needs verification before it is committed.
 - Android QR scanning now exists in the Pair tab, but still needs physical-device verification against the live desktop QR on the same Wi-Fi.
 - Cloud relay endpoint construction now exists on Android, but desktop still needs relay registration/client mode and the QR generator still emits local-only payloads until relay settings are wired.
@@ -85,6 +87,6 @@ Recent connectivity progress:
 
 1. Install the debug APK on a physical Android phone, launch desktop Tauri, scan the QR, and record real pairing/notification delivery results in `docs/integration-log.md`.
 2. Verify native Windows notification toast behavior and close-to-tray behavior manually in a running Tauri desktop session.
-3. Add desktop/mobile UI for relay account registration/login and Google OAuth PKCE so users can obtain relay bearer tokens without manual API calls.
+3. Add Android Google sign-in only after creating the Android OAuth client in Google Cloud with the app package name and signing certificate SHA-1/SHA-256.
 4. Implement true different-network sync by wiring desktop into the existing relay registration/client path; direct LAN QR cannot cross NAT or isolated guest/hotspot networks by itself.
 5. Upgrade message encryption to an authenticated ECDH handshake with forward secrecy if the product needs stronger E2E guarantees than pairing-key-derived AES-GCM.

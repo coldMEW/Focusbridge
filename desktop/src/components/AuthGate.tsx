@@ -4,17 +4,29 @@ import logo from "../assets/logo.png";
 
 interface AuthStatus {
   configured: boolean;
+  relayEmail?: string | null;
+}
+
+interface GoogleSignInResult {
+  email: string;
+  userId: string;
 }
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [relayEmail, setRelayEmail] = useState<string | null>(null);
+  const [relayUrl, setRelayUrl] = useState("http://127.0.0.1:8443");
   const [unlocked, setUnlocked] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   useEffect(() => {
     invoke<AuthStatus>("auth_status")
-      .then((status) => setConfigured(status.configured))
+      .then((status) => {
+        setConfigured(status.configured);
+        setRelayEmail(status.relayEmail ?? null);
+      })
       .catch((err) => setError(String(err)));
   }, []);
 
@@ -31,6 +43,19 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       setPassword("");
     } catch (err) {
       setError(String(err));
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    setError(null);
+    setGoogleBusy(true);
+    try {
+      const result = await invoke<GoogleSignInResult>("auth_google_sign_in", { relayUrl });
+      setRelayEmail(result.email);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setGoogleBusy(false);
     }
   };
 
@@ -55,10 +80,28 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <p className="mt-4 text-sm leading-6 text-text-secondary">
-          {configured
-            ? "Enter your local app password to open notifications and settings."
-            : "Create a local password before using FocusBridge on this desktop."}
+          {relayEmail
+            ? `Signed in as ${relayEmail}. ${configured ? "Unlock your local app vault." : "Create a local app password for this desktop."}`
+            : "Sign in with Google through your FocusBridge relay, then unlock the local app vault."}
         </p>
+        <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
+          <label className="text-xs font-black uppercase tracking-[0.2em] text-text-muted">
+            Relay URL
+          </label>
+          <input
+            value={relayUrl}
+            onChange={(event) => setRelayUrl(event.target.value)}
+            className="mt-2 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+            placeholder="http://127.0.0.1:8443"
+          />
+          <button
+            onClick={() => void signInWithGoogle()}
+            disabled={googleBusy}
+            className="mt-3 w-full rounded-full border border-border-subtle bg-bg-primary px-5 py-3 text-sm font-bold text-text-primary transition hover:-translate-y-0.5 hover:border-border-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {googleBusy ? "Waiting for Google..." : relayEmail ? "Reconnect Google account" : "Continue with Google"}
+          </button>
+        </div>
         <input
           value={password}
           onChange={(event) => setPassword(event.target.value)}
