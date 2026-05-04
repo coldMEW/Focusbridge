@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.content.pm.ApplicationInfo
 import android.util.Base64
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
@@ -23,6 +24,8 @@ class AppInventoryProvider @Inject constructor(
             .asSequence()
             .mapNotNull { info ->
                 val packageName = info.activityInfo?.packageName ?: return@mapNotNull null
+                val appInfo = runCatching { manager.getApplicationInfo(packageName, 0) }.getOrNull()
+                if (appInfo?.isSystemUserFacingApp(packageName) == false) return@mapNotNull null
                 val label = info.loadLabel(manager)?.toString()?.takeIf { it.isNotBlank() } ?: packageName
                 AppInventoryItem(
                     packageName = packageName,
@@ -39,11 +42,12 @@ class AppInventoryProvider @Inject constructor(
     private fun categorize(packageName: String, label: String): String {
         val text = "$packageName $label".lowercase()
         return when {
-            text.hasAny("whatsapp", "telegram", "signal", "messenger", "messages", "sms", "discord") -> "messaging"
-            text.hasAny("gmail", "outlook", "mail", "proton") -> "email"
-            text.hasAny("calendar", "meet", "zoom", "teams", "classroom", "canvas") -> "school_work"
+            text.hasAny("whatsapp", "telegram", "signal", "messenger", "messages", "sms", "discord", "slack", "wechat", "line", "viber") -> "messaging"
+            text.hasAny("instagram", "tiktok", "snapchat", "facebook", "twitter", "threads", "reddit", "linkedin", "pinterest") -> "social"
+            text.hasAny("duolingo", "khan", "coursera", "udemy", "quizlet", "classroom", "canvas", "moodle", "blackboard") -> "learning"
+            text.hasAny("gmail", "outlook", "mail", "proton", "yahoo") -> "email"
+            text.hasAny("calendar", "meet", "zoom", "teams", "notion", "todoist", "trello") -> "school_work"
             text.hasAny("bank", "paypal", "pay", "wallet", "finance") -> "finance"
-            text.hasAny("instagram", "tiktok", "snapchat", "facebook", "twitter", "reddit") -> "social"
             text.hasAny("amazon", "shop", "store", "ebay", "walmart") -> "shopping"
             text.hasAny("youtube", "spotify", "netflix", "music", "video") -> "media"
             text.hasAny("android", "system", "settings", "google play") -> "system"
@@ -52,6 +56,12 @@ class AppInventoryProvider @Inject constructor(
     }
 
     private fun String.hasAny(vararg needles: String): Boolean = needles.any(::contains)
+
+    private fun ApplicationInfo.isSystemUserFacingApp(packageName: String): Boolean {
+        val isSystem = (flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
+        if (!isSystem) return true
+        return packageName in USER_FACING_SYSTEM_PACKAGES
+    }
 
     private fun Drawable.toDataUrl(): String? = runCatching {
         val bitmap = toBitmap(ICON_SIZE_PX, ICON_SIZE_PX)
@@ -73,5 +83,12 @@ class AppInventoryProvider @Inject constructor(
 
     private companion object {
         const val ICON_SIZE_PX = 48
+        val USER_FACING_SYSTEM_PACKAGES = setOf(
+            "com.google.android.gm",
+            "com.google.android.calendar",
+            "com.google.android.youtube",
+            "com.google.android.apps.docs",
+            "com.google.android.apps.photos",
+        )
     }
 }

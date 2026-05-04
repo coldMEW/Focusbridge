@@ -20,5 +20,9 @@ class NotificationRepository @Inject constructor(
 
     suspend fun clearOlderThan(cutoffMs: Long): Int = dao.deleteOlderThan(cutoffMs)
 
+    suspend fun clearBetween(startMs: Long, endMs: Long): Int = dao.deleteBetween(startMs, endMs)
+
+    suspend fun delete(id: String): Int = dao.deleteById(id)
+
     suspend fun clearAll(): Int = dao.deleteAll()
 }

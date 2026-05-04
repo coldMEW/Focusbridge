@@ -36,6 +36,7 @@ export interface Settings {
   studySafeApps: string[];
   favoriteContacts: string[];
   priorityKeywords: string[];
+  blockedKeywords: string[];
   twoFaModeEnabled: boolean;
   syncMode: "LOCAL" | "CLOUD";
 }

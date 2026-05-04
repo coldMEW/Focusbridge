@@ -42,6 +42,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -54,6 +55,7 @@ import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -267,6 +269,8 @@ private fun FocusBridgeScreen(
                         AppTab.Log -> NotificationLog(
                             items = items,
                             clearOlderThan = { cutoffMs -> notifications.clearOlderThan(cutoffMs) },
+                            clearBetween = { startMs, endMs -> notifications.clearBetween(startMs, endMs) },
+                            deleteOne = { id -> notifications.delete(id) },
                             clearAll = { notifications.clearAll() },
                         )
                     }
@@ -749,6 +753,8 @@ private fun RulesTab(
 private fun NotificationLog(
     items: List<NotificationEntity>,
     clearOlderThan: suspend (Long) -> Int,
+    clearBetween: suspend (Long, Long) -> Int,
+    deleteOne: suspend (String) -> Int,
     clearAll: suspend () -> Int,
 ) {
     val scope = rememberCoroutineScope()
@@ -816,10 +822,67 @@ private fun NotificationLog(
                 clearMessage?.let { Text(it, color = Color(0xFF61706A)) }
             }
         }
-        items(items, key = { it.id }) { notification ->
-            MobileNotificationRow(notification)
+        notificationSections(items).forEach { section ->
+            item(section.label) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(section.label, fontWeight = FontWeight.Black, color = Color(0xFF17221E))
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                val deleted = clearBetween(section.startMs, section.endMs)
+                                clearMessage = "Deleted $deleted ${section.label.lowercase()} notifications."
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8F3324)),
+                    ) {
+                        Text("Delete section")
+                    }
+                }
+            }
+            items(section.items, key = { it.id }) { notification ->
+                MobileNotificationRow(
+                    notification = notification,
+                    onDelete = {
+                        scope.launch {
+                            deleteOne(notification.id)
+                        }
+                    },
+                )
+            }
         }
     }
+}
+
+private data class MobileNotificationSection(
+    val label: String,
+    val startMs: Long,
+    val endMs: Long,
+    val items: List<NotificationEntity>,
+)
+
+private fun notificationSections(items: List<NotificationEntity>): List<MobileNotificationSection> {
+    val now = System.currentTimeMillis()
+    val hour = 60L * 60L * 1000L
+    val day = 24L * hour
+    return listOf(
+        MobileNotificationSection("Just now", now - 5L * 60L * 1000L, Long.MAX_VALUE, emptyList()),
+        MobileNotificationSection("Last hour", now - hour, now - 5L * 60L * 1000L, emptyList()),
+        MobileNotificationSection("Today", now - day, now - hour, emptyList()),
+        MobileNotificationSection("This week", now - 7L * day, now - day, emptyList()),
+        MobileNotificationSection("This month", now - 30L * day, now - 7L * day, emptyList()),
+        MobileNotificationSection("Older", 0L, now - 30L * day, emptyList()),
+    ).map { section ->
+        section.copy(
+            items = items.filter { item ->
+                val at = minOf(item.timestamp, item.receivedAt)
+                at >= section.startMs && at < section.endMs
+            },
+        )
+    }.filter { it.items.isNotEmpty() }
 }
 
 @Composable
@@ -926,7 +989,7 @@ private fun ruleIcon(title: String) = when {
 }
 
 @Composable
-private fun MobileNotificationRow(notification: NotificationEntity) {
+private fun MobileNotificationRow(notification: NotificationEntity, onDelete: (() -> Unit)? = null) {
     PanelCard {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
@@ -952,6 +1015,11 @@ private fun MobileNotificationRow(notification: NotificationEntity) {
                     color = Color(0xFF61706A),
                 )
                 Text(notification.priority, color = Color(0xFF9A8F7C), style = MaterialTheme.typography.labelSmall)
+            }
+            if (onDelete != null) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete notification", tint = Color(0xFF8F3324))
+                }
             }
         }
     }

@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { FilterKind } from "../types";
 
@@ -13,17 +12,10 @@ export default function FilterPanel() {
   const active = useSettingsStore((s) => s.activeFilter);
   const setFilter = useSettingsStore((s) => s.setFilter);
   const studyMode = useSettingsStore((s) => s.studyModeEnabled);
-  const setStudyMode = useSettingsStore((s) => s.setStudyMode);
   const blocked = useSettingsStore((s) => s.blockedApps);
 
   const selectFilter = (filter: FilterKind) => {
     setFilter(filter);
-    if (filter === "STUDY") {
-      setStudyMode(true);
-      void invoke("set_study_mode", { on: true }).catch((error) => {
-        console.warn("Unable to persist Study Mode", error);
-      });
-    }
   };
 
   return (
@@ -62,7 +54,7 @@ export default function FilterPanel() {
                         : "bg-bg-secondary text-text-muted")
                   }
                 >
-                  {studyMode ? "On" : "Tap to enable"}
+                  {studyMode ? "On" : "View only"}
                 </span>
               )}
             </button>

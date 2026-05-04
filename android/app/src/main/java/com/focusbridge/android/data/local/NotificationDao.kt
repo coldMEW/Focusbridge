@@ -23,6 +23,12 @@ interface NotificationDao {
     @Query("DELETE FROM notifications WHERE min(timestamp, receivedAt) < :cutoffMs")
     suspend fun deleteOlderThan(cutoffMs: Long): Int
 
+    @Query("DELETE FROM notifications WHERE min(timestamp, receivedAt) >= :startMs AND min(timestamp, receivedAt) < :endMs")
+    suspend fun deleteBetween(startMs: Long, endMs: Long): Int
+
+    @Query("DELETE FROM notifications WHERE id = :id")
+    suspend fun deleteById(id: String): Int
+
     @Query("DELETE FROM notifications")
     suspend fun deleteAll(): Int
 }

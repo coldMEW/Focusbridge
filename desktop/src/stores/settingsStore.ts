@@ -17,6 +17,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   studySafeApps: [],
   favoriteContacts: [],
   priorityKeywords: ["urgent", "asap", "emergency"],
+  blockedKeywords: [],
   twoFaModeEnabled: false,
   syncMode: "LOCAL",
   activeFilter: "ALL",

@@ -189,6 +189,12 @@ pub fn mark_status(db_path: &Path, id: &str, status: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn delete_notification(db_path: &Path, id: &str) -> Result<usize> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.execute("DELETE FROM notifications WHERE id = ?1", params![id])
+        .context("delete notification")
+}
+
 pub fn list_notifications(db_path: &Path, limit: i64) -> Result<Vec<NotificationRow>> {
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
     let mut stmt = conn
@@ -221,6 +227,15 @@ pub fn list_notifications(db_path: &Path, limit: i64) -> Result<Vec<Notification
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .context("collect notifications")
+}
+
+pub fn clear_notifications_between(db_path: &Path, start_ms: i64, end_ms: i64) -> Result<usize> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.execute(
+        "DELETE FROM notifications WHERE MIN(timestamp, received_at) >= ?1 AND MIN(timestamp, received_at) < ?2",
+        params![start_ms, end_ms],
+    )
+    .context("clear notification section")
 }
 
 pub fn dismiss_notification(db_path: &Path, id: &str) -> Result<()> {
@@ -404,14 +419,35 @@ fn categorize_app(package_name: &str, label: &str) -> String {
             "messages",
             "sms",
             "discord",
+            "slack",
+            "viber",
+            "wechat",
+            "line",
         ],
     ) {
         "messaging"
-    } else if contains_any(&text, &["gmail", "outlook", "mail", "proton"]) {
+    } else if contains_any(&text, &["gmail", "outlook", "mail", "proton", "yahoo"]) {
         "email"
     } else if contains_any(
         &text,
-        &["calendar", "meet", "zoom", "teams", "classroom", "canvas"],
+        &[
+            "duolingo",
+            "khan",
+            "coursera",
+            "udemy",
+            "quizlet",
+            "classroom",
+            "canvas",
+            "moodle",
+            "blackboard",
+        ],
+    ) {
+        "learning"
+    } else if contains_any(
+        &text,
+        &[
+            "calendar", "meet", "zoom", "teams", "notion", "todoist", "trello",
+        ],
     ) {
         "school_work"
     } else if contains_any(&text, &["bank", "paypal", "pay", "wallet", "finance"]) {
@@ -424,7 +460,10 @@ fn categorize_app(package_name: &str, label: &str) -> String {
             "snapchat",
             "facebook",
             "twitter",
+            "threads",
             "x.",
+            "linkedin",
+            "pinterest",
             "reddit",
         ],
     ) {

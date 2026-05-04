@@ -8,6 +8,7 @@ interface Props {
   index?: number;
   onIgnore: (id: string) => void;
   onImportant: (id: string) => void;
+  onDelete: (id: string) => void;
 }
 
 export default function NotificationCard({
@@ -15,6 +16,7 @@ export default function NotificationCard({
   index = 0,
   onIgnore,
   onImportant,
+  onDelete,
 }: Props) {
   const [peekVisible, setPeekVisible] = useState(false);
   const is2fa = notification.priority >= 100;
@@ -82,6 +84,12 @@ export default function NotificationCard({
           )}
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => onDelete(notification.id)}
+            className="rounded-full border border-[#f0b8aa] px-3 py-1.5 font-medium text-[#8f3324] hover:bg-[#fff0eb]"
+          >
+            Delete
+          </button>
           <button
             onClick={() => onIgnore(notification.id)}
             className="rounded-full border border-border-subtle px-3 py-1.5 font-medium text-text-secondary hover:border-border-hover hover:text-text-primary"

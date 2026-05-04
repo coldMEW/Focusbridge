@@ -21,7 +21,14 @@ function make(overrides: Partial<Notification> = {}): Notification {
 
 describe("NotificationCard", () => {
   it("renders sender and app", () => {
-    render(<NotificationCard notification={make()} onIgnore={() => {}} onImportant={() => {}} />);
+    render(
+      <NotificationCard
+        notification={make()}
+        onIgnore={() => {}}
+        onImportant={() => {}}
+        onDelete={() => {}}
+      />,
+    );
     expect(screen.getByText("WhatsApp")).toBeInTheDocument();
     expect(screen.getByText("John")).toBeInTheDocument();
   });
@@ -29,7 +36,12 @@ describe("NotificationCard", () => {
   it("fires ignore callback", () => {
     const ignore = vi.fn();
     render(
-      <NotificationCard notification={make()} onIgnore={ignore} onImportant={() => {}} />,
+      <NotificationCard
+        notification={make()}
+        onIgnore={ignore}
+        onImportant={() => {}}
+        onDelete={() => {}}
+      />,
     );
     fireEvent.click(screen.getByText("Ignore"));
     expect(ignore).toHaveBeenCalledWith("n1");
@@ -41,6 +53,7 @@ describe("NotificationCard", () => {
         notification={make({ contentHidden: true, message: "hidden" })}
         onIgnore={() => {}}
         onImportant={() => {}}
+        onDelete={() => {}}
       />,
     );
     expect(screen.getByText("Masked message - hover or tap to peek")).toBeInTheDocument();
@@ -55,6 +68,7 @@ describe("NotificationCard", () => {
         notification={make({ priority: 100 })}
         onIgnore={() => {}}
         onImportant={() => {}}
+        onDelete={() => {}}
       />,
     );
     expect(screen.getByText("security")).toBeInTheDocument();

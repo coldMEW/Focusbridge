@@ -36,6 +36,7 @@ interface NativeSettingsSnapshot {
   study_safe_apps?: string[];
   favorite_contacts?: string[];
   priority_keywords?: string[];
+  blocked_keywords?: string[];
   sync_mode?: "LOCAL" | "CLOUD";
 }
 
@@ -83,6 +84,7 @@ export default function App() {
           priorityKeywords: settings.priority_keywords?.length
             ? settings.priority_keywords
             : ["urgent", "asap", "emergency"],
+          blockedKeywords: settings.blocked_keywords ?? [],
           syncMode: settings.sync_mode ?? "LOCAL",
         }),
       )
