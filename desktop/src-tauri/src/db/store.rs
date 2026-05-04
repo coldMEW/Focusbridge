@@ -86,11 +86,9 @@ pub fn set_app_rule_flag(
     };
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
     conn.execute(
-        &format!(
-            "INSERT INTO app_rules (package_name, label, category, updated_at)
-             VALUES (?1, ?1, 'other', ?2)
-             ON CONFLICT(package_name) DO NOTHING"
-        ),
+        "INSERT INTO app_rules (package_name, label, category, updated_at)
+         VALUES (?1, ?1, 'other', ?2)
+         ON CONFLICT(package_name) DO NOTHING",
         params![package_name, now_millis()],
     )
     .context("ensure app rule row")?;

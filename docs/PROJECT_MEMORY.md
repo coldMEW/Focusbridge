@@ -35,6 +35,13 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Phone app controls now group user-facing phone apps into clearer categories, show priority/blocked word editors in the same section, and avoid listing ordinary built-in system launchers as controllable apps. Selecting the desktop Study lane no longer silently enables Study Mode.
 - Desktop and Android notification logs now support deleting individual notifications and deleting age sections such as just now, last hour, today, week, month, and older. Desktop tray config was reduced to the Rust tray only to avoid duplicate tray icons.
 - Desktop local pairing now sends explicit `AUTH_OK` / `AUTH_FAILED` WebSocket messages so Android marks the device green only after the desktop accepts the pairing key.
+- Current security slice adds local WSS on desktop `:9173` using a persisted self-signed certificate in the desktop app-data directory. Pairing QR payloads now advertise `wss://` LAN candidates and the persisted certificate fingerprint.
+- Android WebSocket pairing now pins the desktop certificate fingerprint from the QR before accepting local WSS, and message traffic after auth is wrapped in AES-GCM `ENCRYPTED` envelopes derived from the pairing key.
+- Current connection regression fix: the desktop listener now sniffs the first TCP byte and accepts both WSS and legacy plaintext WS on `:9173`. New QR scans still use WSS/pinning, but old Android pairings/manual `ws://` entries no longer fail against a TLS-only listener.
+- Desktop tray creation now explicitly assigns the app's bundled default window icon to the tray icon so Windows should show the FocusBridge logo instead of a blank/default tray asset.
+- Desktop has a local app-lock gate: first launch creates a PBKDF2-HMAC-SHA256 app password, later launches require unlock before showing notification data/settings.
+- Relay now has durable account auth endpoints: `/auth/register`, `/auth/login`, and `/auth/google`. Password users are stored in a local JSON account store, sessions are signed bearer tokens, and relay `/register` now requires a bearer token before creating a device pair.
+- Google OAuth client configuration is stored locally in ignored `.env.local`; this file is not committed. The relay now loads `.env.local` / `../.env.local` before config parsing, so the Google endpoint actually sees the local client ID and verifies Google ID tokens against it through Google tokeninfo.
 - Desktop now has native OS notification popups for phone notifications when the main window is hidden, minimized, or unfocused; masked notifications stay masked in the popup body.
 - Desktop close behavior is now guarded: clicking the window X opens an in-app prompt with `Run in tray`, `Quit FocusBridge`, and `Cancel`, so background sync is preserved unless the user intentionally quits.
 - Android notification processing now reads user-configurable privacy/filter rules from local config: Masked Peek Mode, blocked keywords, priority keywords, and favorite contacts.
@@ -61,24 +68,23 @@ Recent connectivity progress:
 - Android can turn cloud QR payloads into relay WebSocket endpoints with the playbook `phone` role, and the relay accepts both legacy `android` and playbook `phone` roles.
 - Android `SyncEngine` now waits for the WebSocket `CONNECTED` state before flushing queued notifications, reducing the risk of losing the first pending notifications after pairing or service startup.
 
-- Desktop local WebSocket is currently plain WS for MVP wiring. WSS with persisted self-signed certs, Android certificate pinning, and message-level encryption are designed in `docs/security-and-rules-next-plan.md` but not implemented yet.
-- Desktop app controls currently enforce filtering on desktop after notifications arrive. Phone-side enforcement from desktop rules still needs an outbound WebSocket channel and `RULES_UPDATE` delivery to Android.
+- Local WSS, Android certificate pinning, and pairing-key-derived message encryption are implemented for local mode. This is real encrypted envelope protection, but it is not yet an ECDH/PFS handshake.
+- Desktop app controls now sync to Android via `RULES_UPDATE`; Android persists and enforces app, keyword, and contact rules before sending captured notifications.
+- Full user-facing Google sign-in UI is not yet implemented in desktop/mobile; the relay backend endpoint is ready for an ID token once a frontend OAuth/PKCE flow is added.
 - Desktop notification list now has code to hydrate existing SQLite notifications on launch, but the latest UI slice still needs verification before it is committed.
 - Android QR scanning now exists in the Pair tab, but still needs physical-device verification against the live desktop QR on the same Wi-Fi.
 - Cloud relay endpoint construction now exists on Android, but desktop still needs relay registration/client mode and the QR generator still emits local-only payloads until relay settings are wired.
-- Android certificate pinning is represented by `CertificateManager`, but the WebSocket client is plain WS until desktop WSS hardening is done.
+- Android WebSocket local mode now prefers WSS with certificate pinning from the QR. Desktop keeps legacy WS compatibility only to avoid breaking already-saved pairings from older builds.
 - Local verification previously hit environment permission blockers: Cargo could not open stale `target/.cargo-lock`, and Vitest/esbuild could not spawn in the sandbox.
-- Android `./gradlew.bat test lint assembleDebug` passes locally with the installed SDK.
+- Android `./gradlew.bat testDebugUnitTest lint assembleDebug` passes locally with the installed SDK/cache.
 - Desktop `pnpm tsc --noEmit`, `pnpm vitest run`, `pnpm build`, and Rust `cargo check` pass locally. Vite/Vitest need elevated execution in this environment because esbuild spawn is blocked by the sandbox.
 - The Tauri GUI crate disables Cargo's native lib test harness because it has no unit tests and the Windows harness can crash while loading native WebView/Tauri symbols; desktop Rust behavior tests live in `desktop/core`, and `cargo check --locked` still compiles the Tauri crate.
 - Relay `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass locally.
 - After switching Rust toolchain files to portable `stable`, this Windows shell may select `stable-x86_64-pc-windows-msvc`; relay compile gates fail locally if Git's Unix `link.exe` shadows the Visual Studio linker. Use `rustup run stable-x86_64-pc-windows-gnu cargo ...` for relay checks on this PC, or repair the MSVC build tools/PATH later.
-
 ## Next Best Tasks
 
 1. Install the debug APK on a physical Android phone, launch desktop Tauri, scan the QR, and record real pairing/notification delivery results in `docs/integration-log.md`.
 2. Verify native Windows notification toast behavior and close-to-tray behavior manually in a running Tauri desktop session.
-3. Implement true different-network sync by wiring desktop into the existing relay registration/client path; direct LAN QR cannot cross NAT or isolated guest/hotspot networks by itself.
-4. Harden local desktop transport from WS to WSS with persisted certs and Android pinning.
-4. Add desktop-to-phone action handling for important/ignored/study-mode toggles.
-5. Add relay registration/client mode in desktop so different-Wi-Fi pairing becomes product-grade rather than local-only plus relay scaffold.
+3. Add desktop/mobile UI for relay account registration/login and Google OAuth PKCE so users can obtain relay bearer tokens without manual API calls.
+4. Implement true different-network sync by wiring desktop into the existing relay registration/client path; direct LAN QR cannot cross NAT or isolated guest/hotspot networks by itself.
+5. Upgrade message encryption to an authenticated ECDH handshake with forward secrecy if the product needs stronger E2E guarantees than pairing-key-derived AES-GCM.

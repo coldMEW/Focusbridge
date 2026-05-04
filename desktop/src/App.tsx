@@ -7,6 +7,7 @@ import StudyModeToggle from "./components/StudyModeToggle";
 import ConnectionStatus from "./components/ConnectionStatus";
 import PairingQR from "./components/PairingQR";
 import SettingsPanel from "./components/SettingsPanel";
+import AuthGate from "./components/AuthGate";
 import logo from "./assets/logo.png";
 import { useConnection } from "./hooks/useConnection";
 import { useConnectionStore } from "./stores/connectionStore";
@@ -136,7 +137,8 @@ export default function App() {
   }[activeFilter];
 
   return (
-    <div className="app-shell h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
+    <AuthGate>
+      <div className="app-shell h-screen w-screen overflow-hidden bg-bg-primary text-text-primary">
       <div className="ambient-orb ambient-orb-one" />
       <div className="ambient-orb ambient-orb-two" />
       <div className="relative z-10 flex h-full p-4">
@@ -247,7 +249,8 @@ export default function App() {
           </section>
         </div>
       )}
-    </div>
+      </div>
+    </AuthGate>
   );
 }
 

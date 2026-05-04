@@ -15,6 +15,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,6 +28,8 @@ class WebSocketClient @Inject constructor(
 ) {
     private var socket: WebSocket? = null
     @Volatile private var connectionSerial = 0
+    @Volatile private var activePairingKey: String? = null
+    @Volatile private var secureReady: Boolean = false
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val state: StateFlow<ConnectionState> = _state
@@ -38,11 +41,18 @@ class WebSocketClient @Inject constructor(
     ) {
         disconnect()
         val serial = ++connectionSerial
+        activePairingKey = pairing.pairingKey
+        secureReady = false
         _state.value = ConnectionState.CONNECTING
         val rawEndpoint = endpointOverride ?: pairing.endpoint
-        val endpoint = if (rawEndpoint.startsWith("ws")) rawEndpoint else "ws://$rawEndpoint"
+        val endpoint = if (rawEndpoint.startsWith("ws")) rawEndpoint else "wss://$rawEndpoint"
         val request = Request.Builder().url(endpoint).build()
-        socket = okHttpClient.newWebSocket(
+        val client = if (endpoint.startsWith("wss://") && pairing.certFingerprint.isNotBlank()) {
+            okHttpClient.withPinnedCertificate(pairing.certFingerprint)
+        } else {
+            okHttpClient
+        }
+        socket = client.newWebSocket(
             request,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -50,14 +60,20 @@ class WebSocketClient @Inject constructor(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    val envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return
+                    var envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return
+                    if (envelope.type == MessageType.ENCRYPTED) {
+                        val payload = envelope.payload as? JsonObject ?: return
+                        val decrypted = runCatching { SecureEnvelope.decrypt(pairing.pairingKey, payload) }.getOrNull() ?: return
+                        envelope = runCatching { Protocol.decodeEnvelope(decrypted) }.getOrNull() ?: return
+                    }
                     when (envelope.type) {
                         MessageType.AUTH_OK -> {
+                            secureReady = true
                             updateState(serial, ConnectionState.CONNECTED)
-                            webSocket.send(Protocol.appInventory(appInventoryProvider.launchableApps()))
+                            webSocket.sendSecure(pairing.pairingKey, Protocol.appInventory(appInventoryProvider.launchableApps()))
                         }
                         MessageType.AUTH_FAILED -> updateState(serial, ConnectionState.DISCONNECTED)
-                        MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope)
+                        MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope, pairing.pairingKey)
                         else -> Unit
                     }
                 }
@@ -73,12 +89,18 @@ class WebSocketClient @Inject constructor(
         )
     }
 
-    fun send(text: String): Boolean = socket?.send(text) == true
+    fun send(text: String): Boolean {
+        val key = activePairingKey
+        val body = if (secureReady && key != null) SecureEnvelope.encrypt(key, text) else text
+        return socket?.send(body) == true
+    }
 
     fun disconnect() {
         connectionSerial += 1
         socket?.close(1000, "FocusBridge disconnect")
         socket = null
+        activePairingKey = null
+        secureReady = false
         if (_state.value != ConnectionState.DISCONNECTED) {
             _state.value = ConnectionState.DISCONNECTED
         }
@@ -90,7 +112,7 @@ class WebSocketClient @Inject constructor(
         }
     }
 
-    private fun applyRulesUpdate(webSocket: WebSocket, envelope: Envelope) {
+    private fun applyRulesUpdate(webSocket: WebSocket, envelope: Envelope, pairingKey: String) {
         scope.launch {
             val update = Protocol.decodeRulesUpdate(envelope.payload)
             appRules.replaceFromDesktop(
@@ -107,7 +129,11 @@ class WebSocketClient @Inject constructor(
             config.set("priority_keywords", update.priorityKeywords.joinToString(","))
             config.set("blocked_keywords", update.blockedKeywords.joinToString(","))
             config.set("favorite_contacts", update.favoriteContacts.joinToString(","))
-            webSocket.send(Protocol.rulesAck(update.appRules.size))
+            webSocket.send(SecureEnvelope.encrypt(pairingKey, Protocol.rulesAck(update.appRules.size)))
         }
+    }
+
+    private fun WebSocket.sendSecure(pairingKey: String, message: String) {
+        send(if (secureReady) SecureEnvelope.encrypt(pairingKey, message) else message)
     }
 }

@@ -34,6 +34,7 @@ enum class MessageType {
     RULES_ACK,
     DESKTOP_ACTION,
     UNPAIR,
+    ENCRYPTED,
 }
 
 @Serializable

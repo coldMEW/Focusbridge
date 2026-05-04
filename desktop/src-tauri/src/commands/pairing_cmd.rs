@@ -1,5 +1,4 @@
 use crate::db::store;
-use crate::pairing::cert_manager::generate_self_signed;
 use crate::pairing::device_store::PairingSession;
 use crate::pairing::qr_generator::{make_qr, QrOutput, QrPayload};
 use crate::state::AppState;
@@ -77,15 +76,15 @@ fn local_ipv4_candidates() -> Vec<String> {
     let mut candidates = BTreeSet::new();
 
     if let Some(ip) = route_ipv4() {
-        candidates.insert(format!("{ip}:9173"));
+        candidates.insert(format!("wss://{ip}:9173"));
     }
 
     for ip in command_ipv4_candidates() {
-        candidates.insert(format!("{ip}:9173"));
+        candidates.insert(format!("wss://{ip}:9173"));
     }
 
     if candidates.is_empty() {
-        candidates.insert("127.0.0.1:9173".to_string());
+        candidates.insert("wss://127.0.0.1:9173".to_string());
     }
 
     candidates.into_iter().collect()
@@ -93,7 +92,6 @@ fn local_ipv4_candidates() -> Vec<String> {
 
 #[tauri::command]
 pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput, String> {
-    let cert = generate_self_signed("focusbridge-desktop").map_err(|e| e.to_string())?;
     let device_id = Uuid::new_v4().to_string();
     let pairing_key = random_hex_256();
     let endpoint_candidates = local_ipv4_candidates();
@@ -111,12 +109,12 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
         device_pair_id: None,
         device_id: device_id.clone(),
         pairing_key: pairing_key.clone(),
-        cert_fingerprint: cert.fingerprint_sha256_hex.clone(),
+        cert_fingerprint: state.cert.fingerprint_sha256_hex.clone(),
     };
     state.set_pairing(PairingSession {
         device_id,
         pairing_key,
-        cert_fingerprint: cert.fingerprint_sha256_hex,
+        cert_fingerprint: state.cert.fingerprint_sha256_hex.clone(),
         expires_at,
     });
     make_qr(&payload, expires_at).map_err(|e| e.to_string())

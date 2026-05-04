@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::{info, warn};
 
+mod account_store;
 mod auth;
 mod config;
 mod metrics;
@@ -17,7 +18,10 @@ mod relay;
 mod session;
 mod tls;
 
-use crate::auth::{parse_role, verify_pairing_key, Role};
+use crate::account_store::{AccountStore, LoginError, RegisterError};
+use crate::auth::{
+    create_session_token, parse_role, verify_pairing_key, verify_session_token, AuthError, Role,
+};
 use crate::config::Config;
 use crate::metrics::Metrics;
 use crate::relay::{RelayState, RouteResult};
@@ -26,6 +30,9 @@ struct AppState {
     relay: Arc<RelayState>,
     metrics: Arc<Metrics>,
     registered: dashmap::DashMap<String, String>, // pair_id -> pairing_key
+    accounts: Arc<AccountStore>,
+    auth_token_secret: String,
+    google_client_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -33,9 +40,34 @@ struct RegisterBody {
     pairing_key: String,
 }
 
+#[derive(Deserialize)]
+struct AccountRegisterBody {
+    email: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct AccountLoginBody {
+    email: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct GoogleLoginBody {
+    id_token: String,
+}
+
 #[derive(Serialize)]
 struct RegisterResponse {
     device_pair_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthResponse {
+    user_id: String,
+    email: String,
+    token: String,
 }
 
 #[get("/health")]
@@ -51,7 +83,14 @@ async fn metrics_endpoint(state: web::Data<AppState>) -> impl Responder {
 }
 
 #[post("/register")]
-async fn register(state: web::Data<AppState>, body: web::Json<RegisterBody>) -> impl Responder {
+async fn register(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Json<RegisterBody>,
+) -> impl Responder {
+    if authenticate_bearer(&req, &state).is_err() {
+        return HttpResponse::Unauthorized().body("missing or invalid bearer token");
+    }
     if body.pairing_key.len() < 16 {
         return HttpResponse::BadRequest().body("pairing_key too short");
     }
@@ -62,6 +101,89 @@ async fn register(state: web::Data<AppState>, body: web::Json<RegisterBody>) -> 
     HttpResponse::Ok().json(RegisterResponse {
         device_pair_id: pair_id,
     })
+}
+
+#[post("/auth/register")]
+async fn auth_register(
+    state: web::Data<AppState>,
+    body: web::Json<AccountRegisterBody>,
+) -> impl Responder {
+    match state
+        .accounts
+        .register_password(&body.email, &body.password, now_epoch_secs())
+    {
+        Ok(user) => HttpResponse::Ok().json(auth_response(&state, &user.id, &user.email)),
+        Err(RegisterError::AlreadyExists) => {
+            HttpResponse::Conflict().body("account already exists")
+        }
+        Err(RegisterError::Auth(AuthError::InvalidEmail)) => {
+            HttpResponse::BadRequest().body("invalid email")
+        }
+        Err(RegisterError::Auth(AuthError::WeakPassword)) => {
+            HttpResponse::BadRequest().body("password must be at least 10 characters")
+        }
+        Err(err) => {
+            warn!(error = %err, "account registration failed");
+            HttpResponse::InternalServerError().body("account registration failed")
+        }
+    }
+}
+
+#[post("/auth/login")]
+async fn auth_login(
+    state: web::Data<AppState>,
+    body: web::Json<AccountLoginBody>,
+) -> impl Responder {
+    match state.accounts.login_password(&body.email, &body.password) {
+        Ok(user) => HttpResponse::Ok().json(auth_response(&state, &user.id, &user.email)),
+        Err(LoginError::InvalidCredentials) => {
+            HttpResponse::Unauthorized().body("invalid email or password")
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GoogleTokenInfo {
+    aud: String,
+    email: Option<String>,
+    email_verified: Option<String>,
+}
+
+#[post("/auth/google")]
+async fn auth_google(
+    state: web::Data<AppState>,
+    body: web::Json<GoogleLoginBody>,
+) -> impl Responder {
+    let Some(client_id) = &state.google_client_id else {
+        return HttpResponse::ServiceUnavailable().body("google auth is not configured");
+    };
+    let response = reqwest::Client::new()
+        .get("https://oauth2.googleapis.com/tokeninfo")
+        .query(&[("id_token", body.id_token.as_str())])
+        .send()
+        .await;
+    let Ok(response) = response else {
+        return HttpResponse::BadGateway().body("google token verification unavailable");
+    };
+    if !response.status().is_success() {
+        return HttpResponse::Unauthorized().body("invalid google token");
+    }
+    let Ok(token_info) = response.json::<GoogleTokenInfo>().await else {
+        return HttpResponse::Unauthorized().body("invalid google token response");
+    };
+    if token_info.aud != *client_id || token_info.email_verified.as_deref() != Some("true") {
+        return HttpResponse::Unauthorized().body("google token audience or email is invalid");
+    }
+    let Some(email) = token_info.email else {
+        return HttpResponse::Unauthorized().body("google token has no email");
+    };
+    match state.accounts.upsert_google_user(&email, now_epoch_secs()) {
+        Ok(user) => HttpResponse::Ok().json(auth_response(&state, &user.id, &user.email)),
+        Err(err) => {
+            warn!(error = %err, "google account upsert failed");
+            HttpResponse::InternalServerError().body("google login failed")
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -196,6 +318,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+    load_local_env_files();
 
     let config_path = std::env::args()
         .skip_while(|a| a != "--config")
@@ -204,6 +327,10 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("config.toml"));
 
     let cfg = Config::load(&config_path).context("load config")?;
+    let auth_token_secret = cfg.auth_token_secret.clone().unwrap_or_else(|| {
+        warn!("FOCUSBRIDGE_AUTH_TOKEN_SECRET is not configured; generated sessions will reset on restart");
+        format!("dev_{}", uuid::Uuid::new_v4().simple())
+    });
     info!(
         bind = %cfg.bind,
         ping_interval_secs = cfg.ping_interval_secs,
@@ -220,6 +347,9 @@ async fn main() -> Result<()> {
         )),
         metrics: Arc::new(Metrics::default()),
         registered: dashmap::DashMap::new(),
+        accounts: Arc::new(AccountStore::load(&cfg.auth_store_path)?),
+        auth_token_secret,
+        google_client_id: cfg.google_client_id.clone(),
     });
 
     let server_builder = HttpServer::new({
@@ -228,6 +358,9 @@ async fn main() -> Result<()> {
             App::new()
                 .app_data(state.clone())
                 .service(health)
+                .service(auth_register)
+                .service(auth_login)
+                .service(auth_google)
                 .service(register)
                 .service(metrics_endpoint)
                 .route("/ws/{pair_id}", web::get().to(ws_handler))
@@ -251,4 +384,59 @@ async fn main() -> Result<()> {
 
     server.run().await.context("server run")?;
     Ok(())
+}
+
+fn authenticate_bearer(req: &HttpRequest, state: &AppState) -> Result<String, AuthError> {
+    let header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(AuthError::InvalidToken)?;
+    let token = header
+        .strip_prefix("Bearer ")
+        .ok_or(AuthError::InvalidToken)?;
+    verify_session_token(token, &state.auth_token_secret, now_epoch_secs())
+}
+
+fn auth_response(state: &AppState, user_id: &str, email: &str) -> AuthResponse {
+    AuthResponse {
+        user_id: user_id.into(),
+        email: email.into(),
+        token: create_session_token(
+            user_id,
+            &state.auth_token_secret,
+            now_epoch_secs(),
+            30 * 24 * 60 * 60,
+        ),
+    }
+}
+
+fn now_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn load_local_env_files() {
+    for path in [PathBuf::from(".env.local"), PathBuf::from("../.env.local")] {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let key = key.trim();
+            if key.is_empty() || std::env::var_os(key).is_some() {
+                continue;
+            }
+            let value = value.trim().trim_matches('"');
+            std::env::set_var(key, value);
+        }
+    }
 }

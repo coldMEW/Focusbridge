@@ -19,6 +19,7 @@ pub enum MessageType {
     RulesAck,
     DesktopAction,
     Unpair,
+    Encrypted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

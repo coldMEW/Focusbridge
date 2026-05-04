@@ -11,15 +11,35 @@ pub struct Config {
     pub pairing_ttl_secs: u64,
     pub max_message_bytes: usize,
     pub rate_limit_per_min: u32,
+    #[serde(default = "default_auth_store_path")]
+    pub auth_store_path: String,
+    #[serde(default)]
+    pub auth_token_secret: Option<String>,
+    #[serde(default)]
+    pub google_client_id: Option<String>,
 }
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("read config {}", path.display()))?;
-        let cfg: Config = toml::from_str(&text).context("parse config toml")?;
+        let mut cfg: Config = toml::from_str(&text).context("parse config toml")?;
+        cfg.auth_token_secret = cfg.auth_token_secret.or_else(|| {
+            std::env::var("FOCUSBRIDGE_AUTH_TOKEN_SECRET")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
+        cfg.google_client_id = cfg.google_client_id.or_else(|| {
+            std::env::var("FOCUSBRIDGE_GOOGLE_CLIENT_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
         Ok(cfg)
     }
+}
+
+fn default_auth_store_path() -> String {
+    "data/auth-users.json".into()
 }
 
 #[cfg(test)]
@@ -36,10 +56,12 @@ ping_interval_secs = 30
 pairing_ttl_secs = 300
 max_message_bytes = 65536
 rate_limit_per_min = 120
+auth_store_path = "data/auth-users.json"
         "#;
         let cfg: Config = toml::from_str(text).unwrap();
         assert_eq!(cfg.bind, "0.0.0.0:8443");
         assert_eq!(cfg.ping_interval_secs, 30);
         assert_eq!(cfg.max_message_bytes, 65536);
+        assert_eq!(cfg.auth_store_path, "data/auth-users.json");
     }
 }

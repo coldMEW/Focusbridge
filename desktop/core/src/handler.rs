@@ -58,7 +58,8 @@ pub fn handle_envelope(env: &Envelope, expected_pairing_key: &str) -> IncomingDe
         | MessageType::Pong
         | MessageType::RulesUpdate
         | MessageType::DesktopAction
-        | MessageType::Unpair => IncomingDecision::Unknown,
+        | MessageType::Unpair
+        | MessageType::Encrypted => IncomingDecision::Unknown,
     }
 }
 

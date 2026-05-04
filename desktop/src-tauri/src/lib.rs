@@ -32,8 +32,9 @@ pub fn run() {
                 .app_data_dir()
                 .context("resolve app data directory")?;
             let db_path = app_data_dir.join("focusbridge.db");
+            let cert = pairing::cert_manager::load_or_generate(&app_data_dir)?;
             db::store::init(&db_path)?;
-            let app_state = AppState::new(db_path);
+            let app_state = AppState::new(db_path, cert);
             app.manage(app_state.clone());
             info!("focusbridge-desktop setup");
             tray::menu::install(&handle)?;
@@ -47,6 +48,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::auth_cmd::auth_status,
+            commands::auth_cmd::auth_register,
+            commands::auth_cmd::auth_login,
             commands::pairing_cmd::generate_pairing_qr,
             commands::pairing_cmd::consume_pairing,
             commands::settings_cmd::get_settings,
