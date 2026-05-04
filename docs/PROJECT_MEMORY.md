@@ -56,6 +56,10 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Desktop App Control is now a real left-nav destination that opens a full main content page with priority words, blocked words, app icons, categories, and toggles instead of being compacted inside the navigation/sidebar.
 - Relay now has `/auth/otp/start` and `/auth/otp/verify` for email/password OTP registration/login. Email delivery uses Resend-compatible HTTP and requires `FOCUSBRIDGE_RESEND_API_KEY` plus `FOCUSBRIDGE_OTP_EMAIL_FROM`.
 - Desktop auth UI now exposes the email/password/OTP relay flow as a non-Google sign-in option, while keeping local app-lock password as the local vault gate.
+- Current persistence fix addresses the 4-5 minute disconnect: desktop now decrypts later encrypted socket messages with the authenticated socket key, not the mutable QR pairing key that can rotate when the QR refreshes near expiry.
+- Android foreground sync now runs a persistent 15-second reconnect supervisor while the foreground service is alive, instead of only connecting once on service start or when a notification is sent.
+- Android `SyncEngine` serializes reconnect attempts with a mutex and flushes pending notifications after the connection lock is released, avoiding duplicate reconnect races and self-deadlock during pending flush.
+- Desktop only clears the active phone sender when the closing socket is still the current sender, so an older socket closing cannot wipe out a newer reconnect.
 - Desktop now has native OS notification popups for phone notifications when the main window is hidden, minimized, or unfocused; masked notifications stay masked in the popup body.
 - Desktop close behavior is now guarded: clicking the window X opens an in-app prompt with `Run in tray`, `Quit FocusBridge`, and `Cancel`, so background sync is preserved unless the user intentionally quits.
 - Android notification processing now reads user-configurable privacy/filter rules from local config: Masked Peek Mode, blocked keywords, priority keywords, and favorite contacts.

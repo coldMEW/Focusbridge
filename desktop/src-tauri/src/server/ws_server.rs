@@ -115,20 +115,23 @@ where
         let text = msg.into_text().context("read websocket text")?;
         let mut envelope: Envelope =
             serde_json::from_str(&text).context("parse focusbridge envelope")?;
-        let expected_key = state
+        let current_pairing_key = state
             .current_pairing()
             .map(|p| p.pairing_key)
             .unwrap_or_default();
+        let expected_key = active_pairing_key
+            .as_deref()
+            .unwrap_or(current_pairing_key.as_str());
         if envelope.r#type == MessageType::Encrypted {
-            let decrypted = decrypt_payload(&expected_key, &envelope.payload)?;
+            let decrypted = decrypt_payload(expected_key, &envelope.payload)?;
             envelope =
                 serde_json::from_str(&decrypted).context("parse encrypted focusbridge envelope")?;
         }
 
-        match handle_envelope(&envelope, &expected_key) {
+        match handle_envelope(&envelope, expected_key) {
             IncomingDecision::AuthAccepted => {
                 info!(peer = %peer, "phone authenticated");
-                active_pairing_key = Some(expected_key.clone());
+                active_pairing_key = Some(expected_key.to_string());
                 state.set_phone_sender(outbound_tx.clone());
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
                     r#"{"version":1,"type":"AUTH_OK","payload":{}}"#.into(),
@@ -190,7 +193,7 @@ where
         }
     }
 
-    state.clear_phone_sender();
+    state.clear_phone_sender_if_current(&outbound_tx);
     app.emit("focusbridge://connection", "DISCONNECTED")?;
     Ok(())
 }

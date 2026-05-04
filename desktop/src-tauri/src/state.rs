@@ -44,6 +44,20 @@ impl AppState {
             .expect("phone sender lock poisoned") = None;
     }
 
+    pub fn clear_phone_sender_if_current(&self, sender: &UnboundedSender<String>) {
+        let mut current = self
+            .phone_sender
+            .lock()
+            .expect("phone sender lock poisoned");
+        if current
+            .as_ref()
+            .map(|active| active.same_channel(sender))
+            .unwrap_or(false)
+        {
+            *current = None;
+        }
+    }
+
     pub fn send_to_phone(&self, message: String) -> bool {
         self.phone_sender
             .lock()
