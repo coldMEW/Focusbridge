@@ -202,7 +202,8 @@ async fn wait_for_oauth_code(
     let mut buffer = vec![0u8; 8192];
     let size = stream.read(&mut buffer).await.map_err(|e| e.to_string())?;
     let request = String::from_utf8_lossy(&buffer[..size]);
-    let response_body = "FocusBridge sign-in complete. You can close this tab.";
+    let response_body =
+        "FocusBridge received the Google authorization code. Return to the app to finish sign-in.";
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         response_body.len(),
@@ -229,18 +230,23 @@ async fn exchange_google_code(
     body.insert("code_verifier", verifier);
     body.insert("grant_type", "authorization_code");
     body.insert("redirect_uri", redirect_uri);
-    reqwest::Client::new()
+    let response = reqwest::Client::new()
         .post(oauth_pkce::GOOGLE_TOKEN_URL)
         .form(&body)
         .send()
         .await
         .context("send google token request")
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .context("google token exchange failed")
-        .map_err(|e| e.to_string())?
-        .json::<GoogleTokenResponse>()
+        .map_err(|e| e.to_string())?;
+    let status = response.status();
+    let text = response
+        .text()
         .await
+        .context("read google token response")
+        .map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("google token exchange failed ({status}): {text}"));
+    }
+    serde_json::from_str::<GoogleTokenResponse>(&text)
         .context("decode google token response")
         .map_err(|e| e.to_string())
 }

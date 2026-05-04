@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import AppRulesPanel from "./AppRulesPanel";
 import { useNotificationStore } from "../stores/notificationStore";
 import { useSettingsStore } from "../stores/settingsStore";
 
@@ -62,8 +61,6 @@ export default function SettingsPanel() {
         </button>
         <RuleRow label="Sync mode" value={syncMode === "LOCAL" ? "Local LAN only" : "Cloud relay"} active />
       </div>
-
-      <AppRulesPanel />
 
       <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
         <div className="text-xs uppercase tracking-[0.22em] text-text-muted">

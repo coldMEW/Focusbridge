@@ -19,7 +19,7 @@ export default function FilterPanel() {
   };
 
   return (
-    <nav className="flex-1 text-sm">
+    <nav className="text-sm">
       <ul className="space-y-2">
         {ITEMS.map((it) => (
           <li key={it.key}>

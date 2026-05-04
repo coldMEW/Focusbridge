@@ -29,6 +29,14 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun send(notification: NotificationEntity) {
+        if (!client.isConnected()) {
+            connectActivePairing()
+        }
+        if (client.send(Protocol.notification(notification))) {
+            notifications.markSent(notification.id)
+            return
+        }
+        connectActivePairing()
         if (client.send(Protocol.notification(notification))) {
             notifications.markSent(notification.id)
         }

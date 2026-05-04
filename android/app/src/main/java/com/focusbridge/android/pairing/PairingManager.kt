@@ -37,6 +37,13 @@ data class QrPairingPayload(
             .plus(endpointCandidates.asSequence())
             .map { it.trim() }
             .filter { it.isNotBlank() }
+            .flatMap { candidate ->
+                if (candidate.startsWith("wss://")) {
+                    sequenceOf(candidate, "ws://${candidate.removePrefix("wss://")}")
+                } else {
+                    sequenceOf(candidate)
+                }
+            }
             .distinct()
             .toList()
     }

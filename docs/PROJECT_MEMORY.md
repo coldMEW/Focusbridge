@@ -1,6 +1,6 @@
 # FocusBridge Project Memory
 
-Last updated: 2026-05-03
+Last updated: 2026-05-04
 
 ## Product
 
@@ -44,6 +44,11 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 - Google OAuth client configuration is stored locally in ignored `.env.local`; this file is not committed. The relay now loads `.env.local` / `../.env.local` before config parsing, so the Google endpoint actually sees the local client ID and verifies Google ID tokens against it through Google tokeninfo.
 - Desktop now has a user-facing Google OAuth PKCE sign-in flow in the auth gate. It opens Google in the browser, listens on a loopback callback, exchanges the authorization code for a Google ID token, sends that token to relay `/auth/google`, and stores the relay auth session in desktop SQLite settings.
 - Added `.env.example` documenting the local Google client ID / relay token-secret configuration split. The real `.env.local` remains ignored and contains the local Google OAuth client ID.
+- Current connection regression fix expands Android local pairing candidates from WSS to WSS-first plus legacy WS fallback, so saved/QR pairings can recover if certificate pinning or older plaintext local mode is the immediate blocker.
+- Android `SyncEngine.send` now reconnects to the active pairing before sending a captured notification and retries once after a failed send, instead of saving the notification locally and silently dropping desktop delivery when the socket is disconnected.
+- Android phone app inventory now uses installed applications, filters out ordinary system internals, keeps launchable/user-facing system apps, and includes app icons. This should fix the desktop showing only one app in Phone app controls on devices where launcher-query visibility was too narrow.
+- Desktop Phone app controls were moved out of the right settings column and into the left navigation/sidebar under the filter/security area, with the filter nav no longer taking all sidebar flex space.
+- Desktop Google OAuth callback page now says the code was received, not that sign-in is complete. Token exchange failures now include Google's HTTP status and response body so the actual client/redirect/config error is visible instead of the vague `google token exchange failed`.
 - Desktop now has native OS notification popups for phone notifications when the main window is hidden, minimized, or unfocused; masked notifications stay masked in the popup body.
 - Desktop close behavior is now guarded: clicking the window X opens an in-app prompt with `Run in tray`, `Quit FocusBridge`, and `Cancel`, so background sync is preserved unless the user intentionally quits.
 - Android notification processing now reads user-configurable privacy/filter rules from local config: Masked Peek Mode, blocked keywords, priority keywords, and favorite contacts.
@@ -79,6 +84,7 @@ Recent connectivity progress:
 - Android WebSocket local mode now prefers WSS with certificate pinning from the QR. Desktop keeps legacy WS compatibility only to avoid breaking already-saved pairings from older builds.
 - Local verification previously hit environment permission blockers: Cargo could not open stale `target/.cargo-lock`, and Vitest/esbuild could not spawn in the sandbox.
 - Android `./gradlew.bat testDebugUnitTest lint assembleDebug` passes locally with the installed SDK/cache.
+- Current Android verification in this sandbox is blocked by network/cache, not source errors: Gradle cannot download `org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:1.9.24` from Google Maven/Maven Central, and offline mode confirms that artifact is not cached.
 - Desktop `pnpm tsc --noEmit`, `pnpm vitest run`, `pnpm build`, and Rust `cargo check` pass locally. Vite/Vitest need elevated execution in this environment because esbuild spawn is blocked by the sandbox.
 - The Tauri GUI crate disables Cargo's native lib test harness because it has no unit tests and the Windows harness can crash while loading native WebView/Tauri symbols; desktop Rust behavior tests live in `desktop/core`, and `cargo check --locked` still compiles the Tauri crate.
 - Relay `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass locally.

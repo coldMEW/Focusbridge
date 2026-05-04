@@ -32,6 +32,34 @@ class PairingPayloadTest {
     }
 
     @Test
+    fun localWssPairingIncludesPlaintextFallbacksForMigration() {
+        val payload = json.decodeFromString(
+            QrPairingPayload.serializer(),
+            """
+            {
+              "v": 1,
+              "mode": "local",
+              "endpoint": "wss://192.168.1.24:9173",
+              "endpointCandidates": ["wss://192.168.1.24:9173", "wss://10.0.0.4:9173"],
+              "deviceId": "desktop-1",
+              "pairingKey": "abc123",
+              "certFingerprint": "ffff"
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            listOf(
+                "wss://192.168.1.24:9173",
+                "ws://192.168.1.24:9173",
+                "wss://10.0.0.4:9173",
+                "ws://10.0.0.4:9173",
+            ),
+            payload.syncEndpointCandidates(),
+        )
+    }
+
+    @Test
     fun cloudPairingBuildsRelayWebSocketEndpointForPhoneRole() {
         val payload = json.decodeFromString(
             QrPairingPayload.serializer(),

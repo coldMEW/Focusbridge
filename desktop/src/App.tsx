@@ -8,6 +8,7 @@ import ConnectionStatus from "./components/ConnectionStatus";
 import PairingQR from "./components/PairingQR";
 import SettingsPanel from "./components/SettingsPanel";
 import AuthGate from "./components/AuthGate";
+import AppRulesPanel from "./components/AppRulesPanel";
 import logo from "./assets/logo.png";
 import { useConnection } from "./hooks/useConnection";
 import { useConnectionStore } from "./stores/connectionStore";
@@ -160,6 +161,9 @@ export default function App() {
             </p>
           </div>
           <FilterPanel />
+          <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+            <AppRulesPanel />
+          </div>
           <div className="mt-auto rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
             <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
               Device status

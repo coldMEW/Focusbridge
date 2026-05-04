@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.util.Base64
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
@@ -20,13 +21,16 @@ class AppInventoryProvider @Inject constructor(
     fun launchableApps(): List<AppInventoryItem> {
         val manager = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return manager.queryIntentActivities(intent, 0)
+        val launcherPackages = manager.queryIntentActivities(intent, 0)
             .asSequence()
+            .mapNotNull { it.activityInfo?.packageName }
+            .toSet()
+        val installed = manager.getInstalledApplications(PackageManager.GET_META_DATA)
+            .asSequence()
+            .filter { appInfo -> appInfo.isUserControllableApp(launcherPackages) }
             .mapNotNull { info ->
-                val packageName = info.activityInfo?.packageName ?: return@mapNotNull null
-                val appInfo = runCatching { manager.getApplicationInfo(packageName, 0) }.getOrNull()
-                if (appInfo?.isSystemUserFacingApp(packageName) == false) return@mapNotNull null
-                val label = info.loadLabel(manager)?.toString()?.takeIf { it.isNotBlank() } ?: packageName
+                val packageName = info.packageName ?: return@mapNotNull null
+                val label = info.loadLabel(manager).toString().takeIf { it.isNotBlank() } ?: packageName
                 AppInventoryItem(
                     packageName = packageName,
                     label = label,
@@ -34,6 +38,7 @@ class AppInventoryProvider @Inject constructor(
                     iconDataUrl = info.loadIcon(manager)?.toDataUrl(),
                 )
             }
+        return installed
             .distinctBy { it.packageName }
             .sortedWith(compareBy<AppInventoryItem> { it.category }.thenBy { it.label.lowercase() })
             .toList()
@@ -57,10 +62,11 @@ class AppInventoryProvider @Inject constructor(
 
     private fun String.hasAny(vararg needles: String): Boolean = needles.any(::contains)
 
-    private fun ApplicationInfo.isSystemUserFacingApp(packageName: String): Boolean {
+    private fun ApplicationInfo.isUserControllableApp(launcherPackages: Set<String>): Boolean {
+        val packageName = this.packageName ?: return false
+        if (packageName == context.packageName) return false
         val isSystem = (flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
-        if (!isSystem) return true
-        return packageName in USER_FACING_SYSTEM_PACKAGES
+        return !isSystem || packageName in launcherPackages || packageName in USER_FACING_SYSTEM_PACKAGES
     }
 
     private fun Drawable.toDataUrl(): String? = runCatching {

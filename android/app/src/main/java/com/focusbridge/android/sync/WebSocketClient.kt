@@ -34,6 +34,8 @@ class WebSocketClient @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val state: StateFlow<ConnectionState> = _state
 
+    fun isConnected(): Boolean = _state.value == ConnectionState.CONNECTED && socket != null
+
     fun connect(
         pairing: PairingEntity,
         deviceName: String = "Android phone",
