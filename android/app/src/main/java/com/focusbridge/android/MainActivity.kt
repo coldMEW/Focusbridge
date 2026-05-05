@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -53,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Delete
@@ -65,6 +67,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -133,6 +136,9 @@ class MainActivity : ComponentActivity() {
                     openNotificationAccess = {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     },
+                    openBatterySettings = {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    },
                     startSync = {
                         ContextCompat.startForegroundService(
                             this,
@@ -160,6 +166,7 @@ private fun FocusBridgeScreen(
     configRepository: ConfigRepository,
     connectionState: ConnectionState,
     openNotificationAccess: () -> Unit,
+    openBatterySettings: () -> Unit,
     startSync: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -183,11 +190,15 @@ private fun FocusBridgeScreen(
     ) {}
     val lifecycleOwner = LocalLifecycleOwner.current
     var notificationAccessEnabled by remember { mutableStateOf(isNotificationAccessEnabled(context)) }
+    var postNotificationsAllowed by remember { mutableStateOf(isPostNotificationsAllowed(context)) }
+    var batteryUnrestricted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
     DisposableEffect(lifecycleOwner, context) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationAccessEnabled = isNotificationAccessEnabled(context)
+                postNotificationsAllowed = isPostNotificationsAllowed(context)
+                batteryUnrestricted = isIgnoringBatteryOptimizations(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -197,8 +208,7 @@ private fun FocusBridgeScreen(
     LaunchedEffect(Unit) {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
+            !postNotificationsAllowed
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -239,8 +249,11 @@ private fun FocusBridgeScreen(
                             activePairing = activePairing,
                             connectionState = connectionState,
                             notificationAccessEnabled = notificationAccessEnabled,
+                            postNotificationsAllowed = postNotificationsAllowed,
+                            batteryUnrestricted = batteryUnrestricted,
                             compact = compact,
                             openNotificationAccess = openNotificationAccess,
+                            openBatterySettings = openBatterySettings,
                             startSync = startSync,
                         )
                         AppTab.Pair -> PairTab(pairingManager = pairingManager, startSync = startSync, compact = compact)
@@ -306,6 +319,16 @@ private fun appTabIcon(tab: AppTab) = when (tab) {
 private fun isNotificationAccessEnabled(context: android.content.Context): Boolean =
     Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
         ?.contains(context.packageName, ignoreCase = true) == true
+
+private fun isPostNotificationsAllowed(context: android.content.Context): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+
+private fun isIgnoringBatteryOptimizations(context: android.content.Context): Boolean {
+    val manager = context.getSystemService(PowerManager::class.java) ?: return false
+    return manager.isIgnoringBatteryOptimizations(context.packageName)
+}
 
 @Composable
 private fun Header(
@@ -407,8 +430,11 @@ private fun HomeTab(
     activePairing: PairingEntity?,
     connectionState: ConnectionState,
     notificationAccessEnabled: Boolean,
+    postNotificationsAllowed: Boolean,
+    batteryUnrestricted: Boolean,
     compact: Boolean,
     openNotificationAccess: () -> Unit,
+    openBatterySettings: () -> Unit,
     startSync: () -> Unit,
 ) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -424,6 +450,18 @@ private fun HomeTab(
                     StatCard("Priority", items.count { it.priority == "URGENT" || it.priority == "HIGH" }.toString(), Modifier.weight(1f))
                 }
             }
+        }
+        item {
+            SetupChecklist(
+                notificationAccessEnabled = notificationAccessEnabled,
+                postNotificationsAllowed = postNotificationsAllowed,
+                batteryUnrestricted = batteryUnrestricted,
+                paired = activePairing != null,
+                connected = connectionState == ConnectionState.CONNECTED,
+                openNotificationAccess = openNotificationAccess,
+                openBatterySettings = openBatterySettings,
+                startSync = startSync,
+            )
         }
         item {
             if (!notificationAccessEnabled) {
@@ -456,6 +494,98 @@ private fun HomeTab(
         }
         items(items.take(6), key = { it.id }) { notification ->
             MobileNotificationRow(notification)
+        }
+    }
+}
+
+@Composable
+private fun SetupChecklist(
+    notificationAccessEnabled: Boolean,
+    postNotificationsAllowed: Boolean,
+    batteryUnrestricted: Boolean,
+    paired: Boolean,
+    connected: Boolean,
+    openNotificationAccess: () -> Unit,
+    openBatterySettings: () -> Unit,
+    startSync: () -> Unit,
+) {
+    PanelCard {
+        Text("Production setup", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+        Text(
+            "Complete these once for reliable LAN/hotspot sync.",
+            color = Color(0xFF61706A),
+        )
+        ChecklistRow(
+            label = "Notification access",
+            body = "Required to capture phone notifications.",
+            done = notificationAccessEnabled,
+            action = "Open",
+            onAction = openNotificationAccess,
+        )
+        ChecklistRow(
+            label = "Android notification permission",
+            body = "Needed for the persistent sync service indicator.",
+            done = postNotificationsAllowed,
+            action = "Check",
+            onAction = startSync,
+        )
+        ChecklistRow(
+            label = "Battery unrestricted",
+            body = "Recommended so Android does not stop sync after a few minutes.",
+            done = batteryUnrestricted,
+            action = "Open",
+            onAction = openBatterySettings,
+        )
+        ChecklistRow(
+            label = "Desktop paired",
+            body = "Scan the desktop QR or paste the manual payload.",
+            done = paired,
+            action = "Sync",
+            onAction = startSync,
+        )
+        ChecklistRow(
+            label = "Live connection",
+            body = "Green means desktop accepted the pairing and heartbeat can recover disconnects.",
+            done = connected,
+            action = "Retry",
+            onAction = startSync,
+        )
+    }
+}
+
+@Composable
+private fun ChecklistRow(
+    label: String,
+    body: String,
+    done: Boolean,
+    action: String,
+    onAction: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (done) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+            contentDescription = null,
+            tint = if (done) Color(0xFF24B86F) else Color(0xFFD6A840),
+            modifier = Modifier.size(24.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.Bold, color = Color(0xFF17221E))
+            Text(body, color = Color(0xFF61706A), style = MaterialTheme.typography.bodySmall)
+        }
+        Button(
+            enabled = !done,
+            onClick = onAction,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF17221E),
+                disabledContainerColor = Color(0xFFE1ECE3),
+                disabledContentColor = Color(0xFF61706A),
+            ),
+        ) {
+            Text(if (done) "Done" else action)
         }
     }
 }

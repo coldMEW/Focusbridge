@@ -97,15 +97,15 @@ Run `pnpm tsc --noEmit`, `pnpm vitest run`, and `pnpm build`.
 - Modify: `android/app/src/main/java/com/focusbridge/android/MainActivity.kt`
 - Modify: Android Compose screen files under `android/app/src/main/java/com/focusbridge/android/ui`
 
-- [ ] **Step 1: Show required setup checklist**
+- [x] **Step 1: Show required setup checklist**
 
 Checklist items: notification access, camera permission, foreground sync running, battery optimization warning, active pairing.
 
-- [ ] **Step 2: Add battery optimization action**
+- [x] **Step 2: Add battery optimization action**
 
 Open Android battery optimization settings for FocusBridge.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run Android tests/lint/build and install APK on phone.
 
@@ -117,7 +117,7 @@ Run Android tests/lint/build and install APK on phone.
 - Modify: `.github/workflows/desktop-ci.yml`
 - Modify: `docs/release-checklist.md`
 
-- [ ] **Step 1: Ensure icons and bundle metadata**
+- [x] **Step 1: Ensure icons and bundle metadata**
 
 Verify product name, executable name, app identifier, Windows icon, tray icon, and notification identity.
 
@@ -125,11 +125,11 @@ Verify product name, executable name, app identifier, Windows icon, tray icon, a
 
 Settings includes a Windows setup action that requests elevation and adds an inbound TCP 9173 allow rule for the current FocusBridge executable.
 
-- [ ] **Step 2: Add release build checklist**
+- [x] **Step 2: Add release build checklist**
 
 Document `pnpm tauri build`, installer output path, smoke test steps, and known Windows notification cache behavior.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run `pnpm build` and `pnpm tauri build --ci` where local tooling permits.
 
@@ -139,11 +139,11 @@ Run `pnpm build` and `pnpm tauri build --ci` where local tooling permits.
 - Modify: `docs/superpowers/specs/2026-05-04-production-release-design.md`
 - Create: `docs/relay-v1.1-plan.md`
 
-- [ ] **Step 1: Document relay transport boundary**
+- [x] **Step 1: Document relay transport boundary**
 
 Write the exact desktop/Android/relay responsibilities without changing local v1.0 behavior.
 
-- [ ] **Step 2: Define relay acceptance tests**
+- [x] **Step 2: Define relay acceptance tests**
 
 List same-network, different-network, and relay-down expected behavior.
 
