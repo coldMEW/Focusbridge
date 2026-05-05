@@ -123,6 +123,34 @@ object Protocol {
             ),
         )
 
+    fun ping(): String =
+        json.encodeToString(
+            Envelope.serializer(),
+            Envelope(
+                type = MessageType.PING,
+                payload = buildJsonObject { },
+            ),
+        )
+
+    fun status(
+        studyModeEnabled: Boolean,
+        notificationsCaptured: Int,
+        notificationsSent: Int,
+        uptime: Long,
+    ): String =
+        json.encodeToString(
+            Envelope.serializer(),
+            Envelope(
+                type = MessageType.STATUS,
+                payload = buildJsonObject {
+                    put("studyModeEnabled", studyModeEnabled)
+                    put("notificationsCaptured", notificationsCaptured)
+                    put("notificationsSent", notificationsSent)
+                    put("uptime", uptime)
+                },
+            ),
+        )
+
     fun appInventory(apps: List<AppInventoryItem>): String =
         json.encodeToString(
             Envelope.serializer(),

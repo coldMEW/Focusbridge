@@ -7,6 +7,7 @@ use focusbridge_core::protocol::{Envelope, MessageType};
 use focusbridge_core::secure_envelope::{decrypt_payload, encrypt_envelope};
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
@@ -134,7 +135,10 @@ where
                 active_pairing_key = Some(expected_key.to_string());
                 state.set_phone_sender(outbound_tx.clone());
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
-                    r#"{"version":1,"type":"AUTH_OK","payload":{}}"#.into(),
+                    format!(
+                        r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":20000,"maxMessageSize":1048576}}}}}}"#,
+                        now_ms()
+                    ),
                 ))
                 .await
                 .context("send auth ok")?;
@@ -177,6 +181,17 @@ where
                 }
             }
             IncomingDecision::PingReceived => {
+                let pong = format!(
+                    r#"{{"version":1,"type":"PONG","payload":{{"serverTime":{}}}}}"#,
+                    now_ms()
+                );
+                let body = match active_pairing_key.as_deref() {
+                    Some(key) => encrypt_envelope(key, &pong).context("encrypt pong envelope")?,
+                    None => pong,
+                };
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(body))
+                    .await
+                    .context("send pong")?;
                 app.emit("focusbridge://status", "PING")?;
             }
             IncomingDecision::StatusUpdate(payload) => {
@@ -196,4 +211,11 @@ where
     state.clear_phone_sender_if_current(&outbound_tx);
     app.emit("focusbridge://connection", "DISCONNECTED")?;
     Ok(())
+}
+
+fn now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
 }

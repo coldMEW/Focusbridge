@@ -6,7 +6,9 @@ import com.focusbridge.android.data.repository.AppRuleRepository
 import com.focusbridge.android.data.repository.ConfigRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +33,8 @@ class WebSocketClient @Inject constructor(
     @Volatile private var activePairingKey: String? = null
     @Volatile private var secureReady: Boolean = false
     @Volatile private var secureTransport: Boolean = false
+    @Volatile private var lastPongAt: Long = 0L
+    private var heartbeatJob: Job? = null
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val state: StateFlow<ConnectionState> = _state
@@ -74,20 +78,27 @@ class WebSocketClient @Inject constructor(
                     when (envelope.type) {
                         MessageType.AUTH_OK -> {
                             secureReady = secureTransport
+                            lastPongAt = System.currentTimeMillis()
                             updateState(serial, ConnectionState.CONNECTED)
+                            startHeartbeat(webSocket, pairing.pairingKey, serial)
                             webSocket.sendSecure(pairing.pairingKey, Protocol.appInventory(appInventoryProvider.launchableApps()))
                         }
                         MessageType.AUTH_FAILED -> updateState(serial, ConnectionState.DISCONNECTED)
+                        MessageType.PONG -> {
+                            lastPongAt = System.currentTimeMillis()
+                        }
                         MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope, pairing.pairingKey)
                         else -> Unit
                     }
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    stopHeartbeat(serial)
                     updateState(serial, ConnectionState.DISCONNECTED)
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    stopHeartbeat(serial)
                     updateState(serial, ConnectionState.DISCONNECTED)
                 }
             },
@@ -107,6 +118,7 @@ class WebSocketClient @Inject constructor(
         activePairingKey = null
         secureReady = false
         secureTransport = false
+        stopHeartbeat()
         if (_state.value != ConnectionState.DISCONNECTED) {
             _state.value = ConnectionState.DISCONNECTED
         }
@@ -115,6 +127,32 @@ class WebSocketClient @Inject constructor(
     private fun updateState(serial: Int, state: ConnectionState) {
         if (serial == connectionSerial) {
             _state.value = state
+        }
+    }
+
+    private fun startHeartbeat(webSocket: WebSocket, pairingKey: String, serial: Int) {
+        heartbeatJob?.cancel()
+        heartbeatJob = scope.launch {
+            while (serial == connectionSerial) {
+                delay(HEARTBEAT_INTERVAL_MS)
+                if (serial != connectionSerial || _state.value != ConnectionState.CONNECTED) {
+                    continue
+                }
+                val age = System.currentTimeMillis() - lastPongAt
+                if (age > HEARTBEAT_TIMEOUT_MS) {
+                    webSocket.close(1001, "FocusBridge heartbeat timeout")
+                    updateState(serial, ConnectionState.DISCONNECTED)
+                    break
+                }
+                webSocket.sendSecure(pairingKey, Protocol.ping())
+            }
+        }
+    }
+
+    private fun stopHeartbeat(serial: Int? = null) {
+        if (serial == null || serial == connectionSerial) {
+            heartbeatJob?.cancel()
+            heartbeatJob = null
         }
     }
 
@@ -141,5 +179,10 @@ class WebSocketClient @Inject constructor(
 
     private fun WebSocket.sendSecure(pairingKey: String, message: String) {
         send(if (secureReady) SecureEnvelope.encrypt(pairingKey, message) else message)
+    }
+
+    private companion object {
+        const val HEARTBEAT_INTERVAL_MS = 20_000L
+        const val HEARTBEAT_TIMEOUT_MS = 60_000L
     }
 }

@@ -69,4 +69,29 @@ class ProtocolTest {
         assertEquals(MessageType.RULES_ACK, envelope.type)
         assertTrue(Protocol.json.encodeToString(Envelope.serializer(), envelope).contains("\"appliedCount\":3"))
     }
+
+    @Test
+    fun pingUsesProtocolEnvelope() {
+        val envelope = Protocol.decodeEnvelope(Protocol.ping())
+
+        assertEquals(MessageType.PING, envelope.type)
+    }
+
+    @Test
+    fun statusUsesProtocolEnvelope() {
+        val envelope = Protocol.decodeEnvelope(
+            Protocol.status(
+                studyModeEnabled = true,
+                notificationsCaptured = 4,
+                notificationsSent = 3,
+                uptime = 120,
+            ),
+        )
+
+        assertEquals(MessageType.STATUS, envelope.type)
+        val encoded = Protocol.json.encodeToString(Envelope.serializer(), envelope)
+        assertTrue(encoded.contains("\"studyModeEnabled\":true"))
+        assertTrue(encoded.contains("\"notificationsCaptured\":4"))
+        assertTrue(encoded.contains("\"notificationsSent\":3"))
+    }
 }
