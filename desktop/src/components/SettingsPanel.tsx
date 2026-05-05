@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNotificationStore } from "../stores/notificationStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import {
+  lockTimeoutLabel,
+  lockTimeoutMinutesFrom,
+  type LockTimeoutUnit,
+} from "../utils/lockTimeout";
 
 interface DiagnosticsSnapshot {
   connected: boolean;
@@ -17,6 +22,8 @@ interface DiagnosticsSnapshot {
 
 export default function SettingsPanel() {
   const [customDays, setCustomDays] = useState("14");
+  const [lockValue, setLockValue] = useState("15");
+  const [lockUnit, setLockUnit] = useState<LockTimeoutUnit>("minute");
   const [clearMessage, setClearMessage] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
@@ -64,6 +71,20 @@ export default function SettingsPanel() {
     } catch (error) {
       setClearMessage(`Clear failed: ${String(error)}`);
     }
+  };
+
+  const saveLockTimeout = (minutes: number) => {
+    replaceSettings({ lockTimeoutMinutes: minutes });
+    window.localStorage.setItem("focusbridge.lockTimeoutMinutes", String(minutes));
+    window.dispatchEvent(new Event("focusbridge://lock-timeout-updated"));
+    void invoke("set_lock_timeout_minutes", { minutes }).catch((error) => {
+      setWindowsSetupMessage(`Lock timeout update failed: ${String(error)}`);
+    });
+  };
+
+  const saveCustomLockTimeout = () => {
+    const value = Number.parseFloat(lockValue);
+    saveLockTimeout(lockTimeoutMinutesFrom(value, lockUnit));
   };
 
   return (
@@ -155,32 +176,86 @@ export default function SettingsPanel() {
       </div>
 
       <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
-        <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
-          App lock
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
+              App lock
+            </div>
+            <p className="mt-2 text-sm leading-5 text-text-secondary">
+              Choose how long FocusBridge stays unlocked after activity. Default is unlimited.
+            </p>
+          </div>
+          <div className="rounded-2xl bg-bg-primary/80 px-3 py-2 text-right">
+            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-muted">
+              Current
+            </div>
+            <div className="text-sm font-black text-text-primary">
+              {lockTimeoutLabel(lockTimeoutMinutes)}
+            </div>
+          </div>
         </div>
-        <p className="mt-2 text-sm leading-5 text-text-secondary">
-          Choose how long FocusBridge stays unlocked after activity. Default is unlimited.
-        </p>
-        <select
-          value={lockTimeoutMinutes}
-          onChange={(event) => {
-            const minutes = Number.parseInt(event.target.value, 10);
-            replaceSettings({ lockTimeoutMinutes: minutes });
-            window.localStorage.setItem("focusbridge.lockTimeoutMinutes", String(minutes));
-            window.dispatchEvent(new Event("focusbridge://lock-timeout-updated"));
-            void invoke("set_lock_timeout_minutes", { minutes }).catch((error) => {
-              setWindowsSetupMessage(`Lock timeout update failed: ${String(error)}`);
-            });
-          }}
-          className="mt-4 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
-        >
-          <option value={0}>Unlimited</option>
-          <option value={1}>1 minute</option>
-          <option value={5}>5 minutes</option>
-          <option value={15}>15 minutes</option>
-          <option value={30}>30 minutes</option>
-          <option value={60}>1 hour</option>
-        </select>
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-2">
+          {[
+            [0, "Unlimited"],
+            [5, "5 min"],
+            [15, "15 min"],
+            [60, "1 hr"],
+            [240, "4 hr"],
+            [1_440, "1 day"],
+            [10_080, "7 days"],
+            [43_200, "1 month"],
+          ].map(([minutes, label]) => (
+            <button
+              key={minutes}
+              onClick={() => saveLockTimeout(Number(minutes))}
+              className={
+                "shrink-0 rounded-full border px-3 py-2 text-xs font-black transition " +
+                (lockTimeoutMinutes === Number(minutes)
+                  ? "border-text-primary bg-text-primary text-bg-primary"
+                  : "border-border-subtle bg-bg-primary/70 text-text-secondary hover:border-border-hover hover:text-text-primary")
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 rounded-3xl border border-border-subtle bg-bg-primary/60 p-3">
+          <div className="flex gap-2">
+            <input
+              value={lockValue}
+              onChange={(event) => setLockValue(event.target.value)}
+              className="min-w-0 flex-1 rounded-2xl border border-border-subtle bg-bg-secondary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+              inputMode="decimal"
+              placeholder="Custom"
+            />
+            <button
+              onClick={saveCustomLockTimeout}
+              className="rounded-2xl bg-text-primary px-4 py-3 text-sm font-black text-bg-primary transition hover:bg-accent-study active:scale-95"
+            >
+              Set
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            {(["minute", "hour", "day", "month"] as const).map((unit) => (
+              <button
+                key={unit}
+                onClick={() => setLockUnit(unit)}
+                className={
+                  "rounded-full border px-2 py-2 text-[11px] font-black uppercase tracking-[0.12em] transition " +
+                  (lockUnit === unit
+                    ? "border-accent-study bg-[#dfeee6] text-accent-study"
+                    : "border-border-subtle bg-bg-secondary/80 text-text-muted hover:border-border-hover hover:text-text-primary")
+                }
+              >
+                {unit === "minute" ? "min" : unit === "hour" ? "hr" : unit === "day" ? "day" : "mo"}
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-xs leading-5 text-text-muted">
+            Custom value saves as {lockTimeoutLabel(lockTimeoutMinutesFrom(Number.parseFloat(lockValue), lockUnit))}.
+            Maximum is 12 months.
+          </p>
+        </div>
         <p className="mt-3 text-xs leading-5 text-text-muted">
           Local unlock now accepts either an 8+ character password or a 4+ digit PIN. Native
           biometric unlock needs Windows Hello/macOS Touch ID integration and is tracked separately.

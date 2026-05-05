@@ -75,8 +75,8 @@ pub fn set_lock_timeout_minutes(
     minutes: u32,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    if minutes > 24 * 60 {
-        return Err("lock timeout cannot exceed 24 hours".into());
+    if minutes > 12 * 30 * 24 * 60 {
+        return Err("lock timeout cannot exceed 12 months".into());
     }
     store::set_setting(&state.db_path, "lock_timeout_minutes", &minutes.to_string())
         .map_err(|e| e.to_string())
