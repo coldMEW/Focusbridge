@@ -50,7 +50,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::auth_cmd::auth_status,
             commands::auth_cmd::auth_register,
+            commands::auth_cmd::auth_register_with_recovery,
             commands::auth_cmd::auth_login,
+            commands::auth_cmd::auth_recovery_question,
+            commands::auth_cmd::auth_reset_password_with_recovery,
             commands::auth_cmd::auth_relay_otp_start,
             commands::auth_cmd::auth_relay_otp_verify,
             commands::auth_cmd::auth_google_sign_in,

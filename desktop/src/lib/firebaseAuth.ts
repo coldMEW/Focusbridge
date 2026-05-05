@@ -3,6 +3,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   type User,
 } from "firebase/auth";
@@ -50,6 +51,10 @@ export async function firebaseCurrentUser(): Promise<FirebaseAuthResult | null> 
       resolve(user ? await toResult(user) : null);
     });
   });
+}
+
+export async function firebaseSendPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim());
 }
 
 async function toResult(user: User): Promise<FirebaseAuthResult> {
