@@ -55,15 +55,15 @@ Expected: handler/protocol tests pass.
 - Modify: `android/app/src/main/java/com/focusbridge/android/sync/WebSocketClient.kt`
 - Modify: `android/app/src/main/java/com/focusbridge/android/sync/SyncEngine.kt`
 
-- [ ] **Step 1: Add `NOTIFICATION_ACK`**
+- [x] **Step 1: Add `NOTIFICATION_ACK`**
 
 Define payload `{ "id": string, "accepted": boolean, "serverTime": integer }`.
 
-- [ ] **Step 2: Desktop sends ACK after store**
+- [x] **Step 2: Desktop sends ACK after store**
 
 After `store::upsert_notification` succeeds, desktop sends `NOTIFICATION_ACK` over the same authenticated socket.
 
-- [ ] **Step 3: Android marks sent only on ACK**
+- [x] **Step 3: Android marks sent only on ACK**
 
 Change Android so `send()` does not call `markSent` immediately after socket send. It marks sent when ACK arrives. Pending notifications remain in Room until ACK.
 

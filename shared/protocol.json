@@ -55,6 +55,15 @@
         "batchId": { "type": ["string", "null"] }
       }
     },
+    "NotificationAck": {
+      "type": "object",
+      "required": ["id", "accepted", "serverTime"],
+      "properties": {
+        "id": { "type": "string" },
+        "accepted": { "type": "boolean" },
+        "serverTime": { "type": "integer" }
+      }
+    },
     "NotificationBatch": {
       "type": "object",
       "required": ["batchId", "appName", "packageName", "sender", "count", "lastMessage", "timestamp", "firstTimestamp", "notifications", "priority"],
@@ -185,6 +194,7 @@
     "AUTH_OK",
     "AUTH_FAILED",
     "NOTIFICATION",
+    "NOTIFICATION_ACK",
     "NOTIFICATION_BATCH",
     "DISMISSAL",
     "DISMISSAL_BATCH",

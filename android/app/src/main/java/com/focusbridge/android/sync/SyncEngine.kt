@@ -56,14 +56,9 @@ class SyncEngine @Inject constructor(
         if (!client.isConnected()) {
             connectActivePairing()
         }
-        if (client.send(Protocol.notification(notification))) {
-            notifications.markSent(notification.id)
-            return
-        }
+        if (client.send(Protocol.notification(notification))) return
         connectActivePairing()
-        if (client.send(Protocol.notification(notification))) {
-            notifications.markSent(notification.id)
-        }
+        client.send(Protocol.notification(notification))
     }
 
     suspend fun flushPending() {

@@ -8,6 +8,7 @@ pub enum MessageType {
     AuthOk,
     AuthFailed,
     Notification,
+    NotificationAck,
     NotificationBatch,
     Dismissal,
     DismissalBatch,

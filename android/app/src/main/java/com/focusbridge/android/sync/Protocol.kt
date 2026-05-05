@@ -23,6 +23,7 @@ enum class MessageType {
     AUTH_OK,
     AUTH_FAILED,
     NOTIFICATION,
+    NOTIFICATION_ACK,
     NOTIFICATION_BATCH,
     DISMISSAL,
     DISMISSAL_BATCH,
@@ -75,6 +76,13 @@ data class RulesUpdatePayload(
     val priorityKeywords: List<String> = emptyList(),
     val blockedKeywords: List<String> = emptyList(),
     val favoriteContacts: List<String> = emptyList(),
+)
+
+@Serializable
+data class NotificationAckPayload(
+    val id: String,
+    val accepted: Boolean,
+    val serverTime: Long,
 )
 
 object Protocol {
@@ -168,6 +176,9 @@ object Protocol {
 
     fun decodeRulesUpdate(payload: JsonElement): RulesUpdatePayload =
         json.decodeFromJsonElement(RulesUpdatePayload.serializer(), payload)
+
+    fun decodeNotificationAck(payload: JsonElement): NotificationAckPayload =
+        json.decodeFromJsonElement(NotificationAckPayload.serializer(), payload)
 
     fun rulesAck(appliedCount: Int): String =
         json.encodeToString(

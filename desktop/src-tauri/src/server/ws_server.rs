@@ -160,6 +160,7 @@ where
                 let row = store::upsert_notification(&state.db_path, &payload)?;
                 app.emit("focusbridge://notification", &row)?;
                 desktop_notifications::show_phone_notification(&app, &row);
+                send_notification_ack(&mut ws, active_pairing_key.as_deref(), &row.id).await?;
             }
             IncomingDecision::StoreBatch(payload) => {
                 if let Some(items) = payload.get("notifications").and_then(|v| v.as_array()) {
@@ -167,6 +168,8 @@ where
                         let row = store::upsert_notification(&state.db_path, item)?;
                         app.emit("focusbridge://notification", &row)?;
                         desktop_notifications::show_phone_notification(&app, &row);
+                        send_notification_ack(&mut ws, active_pairing_key.as_deref(), &row.id)
+                            .await?;
                     }
                 }
             }
@@ -218,4 +221,32 @@ fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+async fn send_notification_ack<S>(
+    ws: &mut WebSocketStream<S>,
+    pairing_key: Option<&str>,
+    id: &str,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let ack = serde_json::json!({
+        "version": 1,
+        "type": "NOTIFICATION_ACK",
+        "payload": {
+            "id": id,
+            "accepted": true,
+            "serverTime": now_ms()
+        }
+    })
+    .to_string();
+    let body = match pairing_key {
+        Some(key) => encrypt_envelope(key, &ack).context("encrypt notification ack envelope")?,
+        None => ack,
+    };
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(body))
+        .await
+        .context("send notification ack")?;
+    Ok(())
 }

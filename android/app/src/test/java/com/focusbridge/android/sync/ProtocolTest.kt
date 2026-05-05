@@ -94,4 +94,19 @@ class ProtocolTest {
         assertTrue(encoded.contains("\"notificationsCaptured\":4"))
         assertTrue(encoded.contains("\"notificationsSent\":3"))
     }
+
+    @Test
+    fun decodesNotificationAckPayload() {
+        val ack = Protocol.decodeNotificationAck(
+            buildJsonObject {
+                put("id", "notification-1")
+                put("accepted", true)
+                put("serverTime", 1234L)
+            },
+        )
+
+        assertEquals("notification-1", ack.id)
+        assertTrue(ack.accepted)
+        assertEquals(1234L, ack.serverTime)
+    }
 }

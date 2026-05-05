@@ -55,6 +55,7 @@ pub fn handle_envelope(env: &Envelope, expected_pairing_key: &str) -> IncomingDe
         MessageType::RulesAck => IncomingDecision::RulesAck(env.payload.clone()),
         MessageType::AuthOk
         | MessageType::AuthFailed
+        | MessageType::NotificationAck
         | MessageType::Pong
         | MessageType::RulesUpdate
         | MessageType::DesktopAction

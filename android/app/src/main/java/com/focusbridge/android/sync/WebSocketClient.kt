@@ -4,6 +4,7 @@ import com.focusbridge.android.data.local.AppRuleEntity
 import com.focusbridge.android.data.local.PairingEntity
 import com.focusbridge.android.data.repository.AppRuleRepository
 import com.focusbridge.android.data.repository.ConfigRepository
+import com.focusbridge.android.data.repository.NotificationRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,6 +28,7 @@ class WebSocketClient @Inject constructor(
     private val appInventoryProvider: AppInventoryProvider,
     private val appRules: AppRuleRepository,
     private val config: ConfigRepository,
+    private val notifications: NotificationRepository,
 ) {
     private var socket: WebSocket? = null
     @Volatile private var connectionSerial = 0
@@ -87,6 +89,7 @@ class WebSocketClient @Inject constructor(
                         MessageType.PONG -> {
                             lastPongAt = System.currentTimeMillis()
                         }
+                        MessageType.NOTIFICATION_ACK -> applyNotificationAck(envelope)
                         MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope, pairing.pairingKey)
                         else -> Unit
                     }
@@ -174,6 +177,15 @@ class WebSocketClient @Inject constructor(
             config.set("blocked_keywords", update.blockedKeywords.joinToString(","))
             config.set("favorite_contacts", update.favoriteContacts.joinToString(","))
             webSocket.send(SecureEnvelope.encrypt(pairingKey, Protocol.rulesAck(update.appRules.size)))
+        }
+    }
+
+    private fun applyNotificationAck(envelope: Envelope) {
+        scope.launch {
+            val ack = Protocol.decodeNotificationAck(envelope.payload)
+            if (ack.accepted) {
+                notifications.markSent(ack.id)
+            }
         }
     }
 
