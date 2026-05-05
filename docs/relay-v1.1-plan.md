@@ -18,6 +18,7 @@ v1.1 adds different-network sync without weakening v1.0 LAN/hotspot mode.
 4. Keep message-level encryption active before relay forwarding.
 5. Add desktop diagnostics for relay connected, relay auth failed, relay unavailable, and LAN fallback active.
 6. Add Android diagnostics for relay connected, relay auth failed, relay unavailable, and local fallback active.
+7. Evaluate optional phone-call integration for cases where Android does not expose calls as notification-listener events. This must be explicit opt-in because phone/call permissions are sensitive.
 
 ## Acceptance Tests
 
