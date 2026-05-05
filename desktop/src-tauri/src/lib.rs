@@ -69,6 +69,7 @@ pub fn run() {
             commands::notification_cmd::clear_all_notifications,
             commands::app_rules_cmd::list_app_rules,
             commands::app_rules_cmd::set_app_rule,
+            commands::windows_setup_cmd::run_windows_first_run_setup,
             minimize_to_tray,
             quit_app,
         ])

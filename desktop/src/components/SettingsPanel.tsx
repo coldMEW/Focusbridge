@@ -20,6 +20,7 @@ export default function SettingsPanel() {
   const [clearMessage, setClearMessage] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [windowsSetupMessage, setWindowsSetupMessage] = useState<string | null>(null);
   const studyMode = useSettingsStore((s) => s.studyModeEnabled);
   const twoFaMode = useSettingsStore((s) => s.twoFaModeEnabled);
   const setTwoFaMode = useSettingsStore((s) => s.setTwoFaMode);
@@ -148,6 +149,31 @@ export default function SettingsPanel() {
               </div>
             </div>
           </div>
+        )}
+      </div>
+
+      <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
+        <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
+          Windows setup
+        </div>
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
+          Add a Windows firewall allow rule for FocusBridge local sync. Installed builds use the
+          FocusBridge app identity for native toasts; dev launches from PowerShell can still show
+          shell identity because Windows ties toast identity to the packaged shortcut.
+        </p>
+        <button
+          onClick={() => {
+            setWindowsSetupMessage("Requesting Windows permission...");
+            invoke<string>("run_windows_first_run_setup")
+              .then(setWindowsSetupMessage)
+              .catch((error) => setWindowsSetupMessage(`Windows setup failed: ${String(error)}`));
+          }}
+          className="mt-4 w-full rounded-full bg-text-primary px-4 py-2 text-sm font-semibold text-bg-primary transition hover:bg-accent-study active:scale-95"
+        >
+          Allow FocusBridge through Windows Firewall
+        </button>
+        {windowsSetupMessage && (
+          <p className="mt-3 text-xs leading-5 text-text-muted">{windowsSetupMessage}</p>
         )}
       </div>
 

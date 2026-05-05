@@ -121,6 +121,10 @@ Run Android tests/lint/build and install APK on phone.
 
 Verify product name, executable name, app identifier, Windows icon, tray icon, and notification identity.
 
+- [x] **Step 1a: Add first-run Windows firewall helper**
+
+Settings includes a Windows setup action that requests elevation and adds an inbound TCP 9173 allow rule for the current FocusBridge executable.
+
 - [ ] **Step 2: Add release build checklist**
 
 Document `pnpm tauri build`, installer output path, smoke test steps, and known Windows notification cache behavior.
