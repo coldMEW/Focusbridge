@@ -531,8 +531,7 @@ function LocalLockPanel(props: {
           {props.configured && (
             <button
               onClick={() => props.setLockMode("recover")}
-              disabled={!props.recoveryQuestion}
-              className="w-full rounded-full border border-border-subtle bg-bg-primary px-5 py-3 text-sm font-bold text-text-primary transition hover:border-border-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-full border border-border-subtle bg-bg-primary px-5 py-3 text-sm font-bold text-text-primary transition hover:border-border-hover"
             >
               Forgot local PIN/password?
             </button>

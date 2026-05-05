@@ -12,6 +12,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio::time::{interval, Duration};
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{accept_async, WebSocketStream};
 use tracing::{error, info, warn};
@@ -89,9 +90,19 @@ where
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
     app.emit("focusbridge://connection", "CONNECTING")?;
     let mut active_pairing_key: Option<String> = None;
+    let mut last_phone_seen_at = now_ms() as i64;
+    let mut stale_check = interval(Duration::from_secs(5));
 
     loop {
         let msg = tokio::select! {
+            _ = stale_check.tick() => {
+                if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 45_000 {
+                    state.mark_stale_connection("phone heartbeat timeout");
+                    app.emit("focusbridge://connection", "DISCONNECTED")?;
+                    break;
+                }
+                continue;
+            }
             outbound = outbound_rx.recv() => {
                 let Some(outbound) = outbound else {
                     break;
@@ -116,6 +127,7 @@ where
             continue;
         }
         let text = msg.into_text().context("read websocket text")?;
+        last_phone_seen_at = now_ms() as i64;
         let mut envelope: Envelope =
             serde_json::from_str(&text).context("parse focusbridge envelope")?;
         let current_pairing_key = state
@@ -135,10 +147,11 @@ where
             IncomingDecision::AuthAccepted => {
                 info!(peer = %peer, "phone authenticated");
                 active_pairing_key = Some(expected_key.to_string());
+                last_phone_seen_at = now_ms() as i64;
                 state.set_phone_sender(outbound_tx.clone());
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
                     format!(
-                        r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":20000,"maxMessageSize":1048576}}}}}}"#,
+                        r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":10000,"maxMessageSize":1048576}}}}}}"#,
                         now_ms()
                     ),
                 ))

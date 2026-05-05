@@ -16,6 +16,7 @@ import { useAppRulesStore } from "./stores/appRulesStore";
 import { useNotificationStore } from "./stores/notificationStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import type { AppRule, ConnectionState, Notification } from "./types";
+import { desktopConnectionStateFromDiagnostics } from "./utils/connectionHealth";
 
 interface NativeNotificationRow {
   id: string;
@@ -41,6 +42,12 @@ interface NativeSettingsSnapshot {
   blocked_keywords?: string[];
   sync_mode?: "LOCAL" | "CLOUD";
   lock_timeout_minutes?: number;
+}
+
+interface DiagnosticsSnapshot {
+  connected: boolean;
+  connectedAt?: number | null;
+  lastHeartbeatAt?: number | null;
 }
 
 function fromNative(row: NativeNotificationRow): Notification {
@@ -127,6 +134,26 @@ export default function App() {
       });
     };
   }, [remove, replaceAppRules, setAppRuleLists, setConnectionState, upsert]);
+
+  useEffect(() => {
+    let disposed = false;
+    const refreshConnectionHealth = () => {
+      invoke<DiagnosticsSnapshot>("get_connection_diagnostics")
+        .then((diagnostics) => {
+          if (disposed) return;
+          setConnectionState(desktopConnectionStateFromDiagnostics(diagnostics));
+        })
+        .catch(() => {
+          if (!disposed) setConnectionState("DISCONNECTED");
+        });
+    };
+    refreshConnectionHealth();
+    const timer = window.setInterval(refreshConnectionHealth, 3_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [setConnectionState]);
 
   const showPairing = state === "DISCONNECTED";
   const newCount = notifications.filter((n) => n.status === "NEW").length;

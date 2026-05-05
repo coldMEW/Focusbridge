@@ -9,6 +9,7 @@ use tokio::sync::mpsc::UnboundedSender;
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionDiagnostics {
     pub connected: bool,
+    pub connected_at: Option<i64>,
     pub active_transport: String,
     pub last_heartbeat_at: Option<i64>,
     pub last_auth_failure: Option<String>,
@@ -19,6 +20,7 @@ impl Default for ConnectionDiagnostics {
     fn default() -> Self {
         Self {
             connected: false,
+            connected_at: None,
             active_transport: "none".into(),
             last_heartbeat_at: None,
             last_auth_failure: None,
@@ -62,6 +64,7 @@ impl AppState {
             .expect("phone sender lock poisoned") = Some(sender);
         self.update_diagnostics(|diag| {
             diag.connected = true;
+            diag.connected_at = Some(now_ms_i64());
             diag.last_disconnect_reason = None;
         });
     }
@@ -86,6 +89,7 @@ impl AppState {
             *current = None;
             self.update_diagnostics(|diag| {
                 diag.connected = false;
+                diag.connected_at = None;
                 diag.active_transport = "none".into();
                 diag.last_disconnect_reason = Some("socket closed".into());
             });
@@ -117,8 +121,18 @@ impl AppState {
     pub fn mark_auth_failed(&self, reason: &str) {
         self.update_diagnostics(|diag| {
             diag.connected = false;
+            diag.connected_at = None;
             diag.last_auth_failure = Some(reason.to_string());
             diag.last_disconnect_reason = Some("authentication failed".into());
+        });
+    }
+
+    pub fn mark_stale_connection(&self, reason: &str) {
+        self.update_diagnostics(|diag| {
+            diag.connected = false;
+            diag.connected_at = None;
+            diag.active_transport = "none".into();
+            diag.last_disconnect_reason = Some(reason.to_string());
         });
     }
 
@@ -133,4 +147,11 @@ impl AppState {
         let mut diagnostics = self.diagnostics.lock().expect("diagnostics lock poisoned");
         update(&mut diagnostics);
     }
+}
+
+fn now_ms_i64() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
 }

@@ -111,7 +111,11 @@ class WebSocketClient @Inject constructor(
     fun send(text: String): Boolean {
         val key = activePairingKey
         val body = if (secureReady && key != null) SecureEnvelope.encrypt(key, text) else text
-        return socket?.send(body) == true
+        val accepted = socket?.send(body) == true
+        if (!accepted && _state.value == ConnectionState.CONNECTED) {
+            _state.value = ConnectionState.DISCONNECTED
+        }
+        return accepted
     }
 
     fun disconnect() {
@@ -194,7 +198,7 @@ class WebSocketClient @Inject constructor(
     }
 
     private companion object {
-        const val HEARTBEAT_INTERVAL_MS = 20_000L
-        const val HEARTBEAT_TIMEOUT_MS = 60_000L
+        const val HEARTBEAT_INTERVAL_MS = 10_000L
+        const val HEARTBEAT_TIMEOUT_MS = 25_000L
     }
 }

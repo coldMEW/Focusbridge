@@ -6,6 +6,7 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsSnapshot {
     pub connected: bool,
+    pub connected_at: Option<i64>,
     pub active_transport: String,
     pub lan_port: u16,
     pub endpoint_candidates: Vec<String>,
@@ -21,6 +22,7 @@ pub fn get_connection_diagnostics(state: tauri::State<'_, AppState>) -> Diagnost
     let diagnostics = state.diagnostics();
     DiagnosticsSnapshot {
         connected: diagnostics.connected,
+        connected_at: diagnostics.connected_at,
         active_transport: diagnostics.active_transport,
         lan_port: 9173,
         endpoint_candidates: local_ipv4_candidates(),
