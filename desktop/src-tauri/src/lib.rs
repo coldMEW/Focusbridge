@@ -54,6 +54,7 @@ pub fn run() {
             commands::auth_cmd::auth_relay_otp_start,
             commands::auth_cmd::auth_relay_otp_verify,
             commands::auth_cmd::auth_google_sign_in,
+            commands::diagnostics_cmd::get_connection_diagnostics,
             commands::pairing_cmd::generate_pairing_qr,
             commands::pairing_cmd::consume_pairing,
             commands::settings_cmd::get_settings,

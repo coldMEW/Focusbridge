@@ -79,15 +79,15 @@ Manual test: pair phone, kill desktop, generate notification, restart desktop, v
 - Modify: `desktop/src/App.tsx`
 - Modify: `desktop/src/styles.css`
 
-- [ ] **Step 1: Add diagnostics command**
+- [x] **Step 1: Add diagnostics command**
 
 Expose LAN IP candidates, port `9173`, connection state, last heartbeat, last auth failure, and active transport.
 
-- [ ] **Step 2: Add UI panel**
+- [x] **Step 2: Add UI panel**
 
 Add a Diagnostics section in desktop settings/app control area with green/yellow/red states and actionable messages.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run `pnpm tsc --noEmit`, `pnpm vitest run`, and `pnpm build`.
 

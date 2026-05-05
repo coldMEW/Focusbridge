@@ -72,7 +72,7 @@ fn command_ipv4_candidates() -> Vec<Ipv4Addr> {
         .collect()
 }
 
-fn local_ipv4_candidates() -> Vec<String> {
+pub(crate) fn local_ipv4_candidates() -> Vec<String> {
     let mut candidates = BTreeSet::new();
 
     if let Some(ip) = route_ipv4() {

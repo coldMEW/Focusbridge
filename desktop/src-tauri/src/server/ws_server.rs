@@ -65,12 +65,14 @@ async fn handle_connection(
         let ws = accept_async(tls_stream)
             .await
             .context("accept secure websocket")?;
+        state.mark_transport("wss");
         handle_websocket(ws, peer, state, app).await
     } else {
         warn!(peer = %peer, "accepting legacy plaintext websocket; ask user to refresh QR for WSS pinning");
         let ws = accept_async(stream)
             .await
             .context("accept legacy websocket")?;
+        state.mark_transport("ws_legacy");
         handle_websocket(ws, peer, state, app).await
     }
 }
@@ -149,6 +151,7 @@ where
             }
             IncomingDecision::AuthFailed(reason) => {
                 warn!(peer = %peer, reason = %reason, "phone auth failed");
+                state.mark_auth_failed(&reason);
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
                     r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
                 ))
@@ -184,9 +187,11 @@ where
                 }
             }
             IncomingDecision::PingReceived => {
+                let heartbeat_at = now_ms() as i64;
+                state.mark_heartbeat(heartbeat_at);
                 let pong = format!(
                     r#"{{"version":1,"type":"PONG","payload":{{"serverTime":{}}}}}"#,
-                    now_ms()
+                    heartbeat_at
                 );
                 let body = match active_pairing_key.as_deref() {
                     Some(key) => encrypt_envelope(key, &pong).context("encrypt pong envelope")?,

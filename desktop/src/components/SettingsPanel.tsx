@@ -1,17 +1,46 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNotificationStore } from "../stores/notificationStore";
 import { useSettingsStore } from "../stores/settingsStore";
 
+interface DiagnosticsSnapshot {
+  connected: boolean;
+  activeTransport: string;
+  lanPort: number;
+  endpointCandidates: string[];
+  certificateFingerprint: string;
+  pairingActive: boolean;
+  lastHeartbeatAt?: number | null;
+  lastAuthFailure?: string | null;
+  lastDisconnectReason?: string | null;
+}
+
 export default function SettingsPanel() {
   const [customDays, setCustomDays] = useState("14");
   const [clearMessage, setClearMessage] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
   const studyMode = useSettingsStore((s) => s.studyModeEnabled);
   const twoFaMode = useSettingsStore((s) => s.twoFaModeEnabled);
   const setTwoFaMode = useSettingsStore((s) => s.setTwoFaMode);
   const syncMode = useSettingsStore((s) => s.syncMode);
   const clearAll = useNotificationStore((s) => s.clear);
   const clearOlderThan = useNotificationStore((s) => s.clearOlderThan);
+
+  const refreshDiagnostics = () => {
+    invoke<DiagnosticsSnapshot>("get_connection_diagnostics")
+      .then((snapshot) => {
+        setDiagnostics(snapshot);
+        setDiagnosticsError(null);
+      })
+      .catch((error) => setDiagnosticsError(String(error)));
+  };
+
+  useEffect(() => {
+    refreshDiagnostics();
+    const timer = window.setInterval(refreshDiagnostics, 10_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const clearHistory = async (days: number) => {
     const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -63,6 +92,66 @@ export default function SettingsPanel() {
       </div>
 
       <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
+              Connection diagnostics
+            </div>
+            <p className="mt-2 text-sm leading-5 text-text-secondary">
+              Local mode uses port 9173. If university Wi-Fi blocks device-to-device traffic, use
+              hotspot until relay mode ships.
+            </p>
+          </div>
+          <button
+            onClick={refreshDiagnostics}
+            className="rounded-full border border-border-subtle px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-border-hover hover:text-text-primary"
+          >
+            Refresh
+          </button>
+        </div>
+        {diagnosticsError && <p className="mt-3 text-xs text-[#9b4b3d]">{diagnosticsError}</p>}
+        {diagnostics && (
+          <div className="mt-4 space-y-3 text-xs text-text-secondary">
+            <DiagnosticLine
+              label="State"
+              value={diagnostics.connected ? "Connected" : "Disconnected"}
+              good={diagnostics.connected}
+            />
+            <DiagnosticLine label="Transport" value={diagnostics.activeTransport} />
+            <DiagnosticLine label="LAN port" value={String(diagnostics.lanPort)} />
+            <DiagnosticLine
+              label="Last heartbeat"
+              value={
+                diagnostics.lastHeartbeatAt
+                  ? new Date(diagnostics.lastHeartbeatAt).toLocaleTimeString()
+                  : "Waiting for phone ping"
+              }
+            />
+            {diagnostics.lastAuthFailure && (
+              <DiagnosticLine label="Auth failure" value={diagnostics.lastAuthFailure} bad />
+            )}
+            {diagnostics.lastDisconnectReason && (
+              <DiagnosticLine label="Disconnect reason" value={diagnostics.lastDisconnectReason} />
+            )}
+            <div>
+              <div className="font-semibold text-text-primary">Desktop endpoints</div>
+              <div className="mt-2 max-h-24 overflow-auto rounded-2xl bg-bg-primary/70 p-3 font-mono text-[11px] leading-5">
+                {diagnostics.endpointCandidates.map((endpoint) => (
+                  <div key={endpoint}>{endpoint}</div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="font-semibold text-text-primary">Certificate fingerprint</div>
+              <div className="mt-2 max-h-20 overflow-auto break-all rounded-2xl bg-bg-primary/70 p-3 font-mono text-[11px] leading-5">
+                {diagnostics.certificateFingerprint}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
         <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
           Clear history
         </div>
@@ -107,6 +196,27 @@ export default function SettingsPanel() {
         {clearMessage && <p className="mt-3 text-xs text-text-muted">{clearMessage}</p>}
       </div>
     </section>
+  );
+}
+
+function DiagnosticLine({
+  label,
+  value,
+  good,
+  bad,
+}: {
+  label: string;
+  value: string;
+  good?: boolean;
+  bad?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="font-semibold text-text-primary">{label}</span>
+      <span className={good ? "text-[#2f8f61]" : bad ? "text-[#9b4b3d]" : "text-text-secondary"}>
+        {value}
+      </span>
+    </div>
   );
 }
 

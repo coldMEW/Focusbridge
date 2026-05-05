@@ -1,8 +1,31 @@
 use crate::pairing::device_store::PairingSession;
 use focusbridge_core::cert::GeneratedCert;
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionDiagnostics {
+    pub connected: bool,
+    pub active_transport: String,
+    pub last_heartbeat_at: Option<i64>,
+    pub last_auth_failure: Option<String>,
+    pub last_disconnect_reason: Option<String>,
+}
+
+impl Default for ConnectionDiagnostics {
+    fn default() -> Self {
+        Self {
+            connected: false,
+            active_transport: "none".into(),
+            last_heartbeat_at: None,
+            last_auth_failure: None,
+            last_disconnect_reason: None,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -10,6 +33,7 @@ pub struct AppState {
     pub cert: Arc<GeneratedCert>,
     pairing: Arc<Mutex<Option<PairingSession>>>,
     phone_sender: Arc<Mutex<Option<UnboundedSender<String>>>>,
+    diagnostics: Arc<Mutex<ConnectionDiagnostics>>,
 }
 
 impl AppState {
@@ -19,6 +43,7 @@ impl AppState {
             cert: Arc::new(cert),
             pairing: Arc::new(Mutex::new(None)),
             phone_sender: Arc::new(Mutex::new(None)),
+            diagnostics: Arc::new(Mutex::new(ConnectionDiagnostics::default())),
         }
     }
 
@@ -35,6 +60,10 @@ impl AppState {
             .phone_sender
             .lock()
             .expect("phone sender lock poisoned") = Some(sender);
+        self.update_diagnostics(|diag| {
+            diag.connected = true;
+            diag.last_disconnect_reason = None;
+        });
     }
 
     pub fn clear_phone_sender(&self) {
@@ -55,6 +84,11 @@ impl AppState {
             .unwrap_or(false)
         {
             *current = None;
+            self.update_diagnostics(|diag| {
+                diag.connected = false;
+                diag.active_transport = "none".into();
+                diag.last_disconnect_reason = Some("socket closed".into());
+            });
         }
     }
 
@@ -65,5 +99,38 @@ impl AppState {
             .as_ref()
             .map(|sender| sender.send(message).is_ok())
             .unwrap_or(false)
+    }
+
+    pub fn mark_transport(&self, transport: &str) {
+        self.update_diagnostics(|diag| {
+            diag.active_transport = transport.to_string();
+            diag.last_disconnect_reason = None;
+        });
+    }
+
+    pub fn mark_heartbeat(&self, at: i64) {
+        self.update_diagnostics(|diag| {
+            diag.last_heartbeat_at = Some(at);
+        });
+    }
+
+    pub fn mark_auth_failed(&self, reason: &str) {
+        self.update_diagnostics(|diag| {
+            diag.connected = false;
+            diag.last_auth_failure = Some(reason.to_string());
+            diag.last_disconnect_reason = Some("authentication failed".into());
+        });
+    }
+
+    pub fn diagnostics(&self) -> ConnectionDiagnostics {
+        self.diagnostics
+            .lock()
+            .expect("diagnostics lock poisoned")
+            .clone()
+    }
+
+    fn update_diagnostics(&self, update: impl FnOnce(&mut ConnectionDiagnostics)) {
+        let mut diagnostics = self.diagnostics.lock().expect("diagnostics lock poisoned");
+        update(&mut diagnostics);
     }
 }
