@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "51760085622",
+    "project_id": "foucsbridge",
+    "storage_bucket": "foucsbridge.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:51760085622:android:e6911f6c7c1fdc1d007d57",
+        "android_client_info": {
+          "package_name": "com.focusbridge.android"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "51760085622-edq2oonjrl3r7fr6ufokiado82hidog1.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCya8eZ2hTdff687B9__CVCgABZVGr_2ac"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "51760085622-edq2oonjrl3r7fr6ufokiado82hidog1.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

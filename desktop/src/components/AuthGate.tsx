@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import logo from "../assets/logo.png";
+import { firebaseCurrentUser, firebaseEmailSignIn, firebaseEmailSignUp } from "../lib/firebaseAuth";
 
 interface AuthStatus {
   configured: boolean;
@@ -26,6 +27,9 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [email, setEmail] = useState("");
+  const [firebasePassword, setFirebasePassword] = useState("");
+  const [firebaseBusy, setFirebaseBusy] = useState(false);
+  const [firebaseEmail, setFirebaseEmail] = useState<string | null>(null);
   const [lockTimeoutMinutes, setLockTimeoutMinutes] = useState(0);
   const [lastActivity, setLastActivity] = useState(Date.now());
 
@@ -36,6 +40,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         setRelayEmail(status.relayEmail ?? null);
         setLockTimeoutMinutes(status.lockTimeoutMinutes ?? 0);
         window.localStorage.setItem("focusbridge.lockTimeoutMinutes", String(status.lockTimeoutMinutes ?? 0));
+      })
+      .catch((err) => setError(String(err)));
+    firebaseCurrentUser()
+      .then((user) => {
+        if (user?.email) {
+          setFirebaseEmail(user.email);
+          setRelayEmail((current) => current ?? user.email);
+        }
       })
       .catch((err) => setError(String(err)));
   }, []);
@@ -116,6 +128,24 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const firebaseEmailPassword = async (mode: "signin" | "signup") => {
+    setError(null);
+    setFirebaseBusy(true);
+    try {
+      const result =
+        mode === "signup"
+          ? await firebaseEmailSignUp(email, firebasePassword)
+          : await firebaseEmailSignIn(email, firebasePassword);
+      setFirebaseEmail(result.email);
+      setRelayEmail(result.email);
+      setFirebasePassword("");
+    } catch (err) {
+      setError(firebaseErrorMessage(err));
+    } finally {
+      setFirebaseBusy(false);
+    }
+  };
+
   const verifyRelayOtp = async () => {
     setError(null);
     setRelayBusy(true);
@@ -157,25 +187,53 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <p className="mt-4 text-sm leading-6 text-text-secondary">
-          {relayEmail
-            ? `Signed in as ${relayEmail}. ${configured ? "Unlock your local app vault." : "Create a local password or PIN for this desktop."}`
+          {relayEmail || firebaseEmail
+            ? `Signed in as ${relayEmail ?? firebaseEmail}. ${configured ? "Unlock your local app vault." : "Create a local password or PIN for this desktop."}`
             : "Sign in with Google through your FocusBridge relay, then unlock the local app vault."}
         </p>
         <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
           <label className="text-xs font-black uppercase tracking-[0.2em] text-text-muted">
-            Relay URL
+            Firebase email account
           </label>
-          <input
-            value={relayUrl}
-            onChange={(event) => setRelayUrl(event.target.value)}
-            className="mt-2 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
-            placeholder="http://127.0.0.1:8443"
-          />
           <input
             value={email}
             onChange={(event) => setEmail(event.target.value)}
+            className="mt-2 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+            placeholder="Email"
+          />
+          <input
+            value={firebasePassword}
+            onChange={(event) => setFirebasePassword(event.target.value)}
+            type="password"
             className="mt-3 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
-            placeholder="Email for relay account"
+            placeholder="Firebase account password"
+          />
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => void firebaseEmailPassword("signin")}
+              disabled={firebaseBusy}
+              className="rounded-full bg-text-primary px-4 py-3 text-sm font-bold text-bg-primary transition hover:bg-accent-study disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Sign in
+            </button>
+            <button
+              onClick={() => void firebaseEmailPassword("signup")}
+              disabled={firebaseBusy}
+              className="rounded-full border border-border-subtle bg-bg-primary px-4 py-3 text-sm font-bold text-text-primary transition hover:-translate-y-0.5 hover:border-border-hover disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Sign up
+            </button>
+          </div>
+        </div>
+        <details className="mt-4 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
+          <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.2em] text-text-muted">
+            Advanced relay auth
+          </summary>
+          <input
+            value={relayUrl}
+            onChange={(event) => setRelayUrl(event.target.value)}
+            className="mt-3 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+            placeholder="http://127.0.0.1:8443"
           />
           <input
             value={relayPassword}
@@ -210,7 +268,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           >
             {googleBusy ? "Waiting for Google..." : relayEmail ? "Reconnect Google account" : "Continue with Google"}
           </button>
-        </div>
+        </details>
         <input
           value={password}
           onChange={(event) => setPassword(event.target.value)}
@@ -232,4 +290,15 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       </section>
     </main>
   );
+}
+
+function firebaseErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("auth/email-already-in-use")) return "Email is already registered. Use Sign in.";
+  if (message.includes("auth/invalid-credential")) return "Invalid email or password.";
+  if (message.includes("auth/operation-not-allowed")) {
+    return "Firebase Email/Password auth is disabled. Enable it in Firebase Console > Authentication > Sign-in method.";
+  }
+  if (message.includes("auth/weak-password")) return "Firebase password is too weak. Use at least 6 characters.";
+  return message;
 }
