@@ -49,7 +49,14 @@ fn parse_ipv4_token(token: &str) -> Option<Ipv4Addr> {
 
 #[cfg(target_os = "windows")]
 fn command_ipv4_candidates() -> Vec<Ipv4Addr> {
-    let Ok(output) = Command::new("ipconfig").output() else {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let Ok(output) = Command::new("ipconfig")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&output.stdout);

@@ -39,6 +39,7 @@ export interface Settings {
   blockedKeywords: string[];
   twoFaModeEnabled: boolean;
   syncMode: "LOCAL" | "CLOUD";
+  lockTimeoutMinutes: number;
 }
 
 export type FilterKind = "ALL" | "IMPORTANT" | "STUDY" | "TWOFA" | "APP_CONTROL";

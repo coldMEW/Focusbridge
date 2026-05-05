@@ -58,6 +58,7 @@ pub fn run() {
             commands::pairing_cmd::generate_pairing_qr,
             commands::pairing_cmd::consume_pairing,
             commands::settings_cmd::get_settings,
+            commands::settings_cmd::set_lock_timeout_minutes,
             commands::settings_cmd::set_study_mode,
             commands::settings_cmd::set_rule_text,
             commands::notification_cmd::list_notifications,

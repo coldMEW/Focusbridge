@@ -54,6 +54,18 @@ pub fn upsert_notification(db_path: &Path, payload: &Value) -> Result<Notificati
     Ok(row)
 }
 
+pub fn notification_exists(db_path: &Path, id: &str) -> Result<bool> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.query_row(
+        "SELECT 1 FROM notifications WHERE id = ?1 LIMIT 1",
+        params![id],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|value| value.is_some())
+    .context("check notification exists")
+}
+
 pub fn list_app_rules(db_path: &Path) -> Result<Vec<AppRuleRow>> {
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
     let mut stmt = conn

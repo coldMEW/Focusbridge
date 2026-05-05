@@ -160,17 +160,35 @@ where
                 app.emit("focusbridge://connection", "DISCONNECTED")?;
             }
             IncomingDecision::StoreNotification(payload) => {
+                let existed = payload
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .map(|id| store::notification_exists(&state.db_path, id))
+                    .transpose()?
+                    .unwrap_or(false);
+                let is_new = !existed;
                 let row = store::upsert_notification(&state.db_path, &payload)?;
                 app.emit("focusbridge://notification", &row)?;
-                desktop_notifications::show_phone_notification(&app, &row);
+                if is_new {
+                    desktop_notifications::show_phone_notification(&app, &row);
+                }
                 send_notification_ack(&mut ws, active_pairing_key.as_deref(), &row.id).await?;
             }
             IncomingDecision::StoreBatch(payload) => {
                 if let Some(items) = payload.get("notifications").and_then(|v| v.as_array()) {
                     for item in items {
+                        let existed = item
+                            .get("id")
+                            .and_then(|value| value.as_str())
+                            .map(|id| store::notification_exists(&state.db_path, id))
+                            .transpose()?
+                            .unwrap_or(false);
+                        let is_new = !existed;
                         let row = store::upsert_notification(&state.db_path, item)?;
                         app.emit("focusbridge://notification", &row)?;
-                        desktop_notifications::show_phone_notification(&app, &row);
+                        if is_new {
+                            desktop_notifications::show_phone_notification(&app, &row);
+                        }
                         send_notification_ack(&mut ws, active_pairing_key.as_deref(), &row.id)
                             .await?;
                     }

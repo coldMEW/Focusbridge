@@ -25,6 +25,8 @@ export default function SettingsPanel() {
   const twoFaMode = useSettingsStore((s) => s.twoFaModeEnabled);
   const setTwoFaMode = useSettingsStore((s) => s.setTwoFaMode);
   const syncMode = useSettingsStore((s) => s.syncMode);
+  const lockTimeoutMinutes = useSettingsStore((s) => s.lockTimeoutMinutes);
+  const replaceSettings = useSettingsStore((s) => s.replace);
   const clearAll = useNotificationStore((s) => s.clear);
   const clearOlderThan = useNotificationStore((s) => s.clearOlderThan);
 
@@ -39,7 +41,7 @@ export default function SettingsPanel() {
 
   useEffect(() => {
     refreshDiagnostics();
-    const timer = window.setInterval(refreshDiagnostics, 10_000);
+    const timer = window.setInterval(refreshDiagnostics, 30_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -150,6 +152,39 @@ export default function SettingsPanel() {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
+        <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
+          App lock
+        </div>
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
+          Choose how long FocusBridge stays unlocked after activity. Default is unlimited.
+        </p>
+        <select
+          value={lockTimeoutMinutes}
+          onChange={(event) => {
+            const minutes = Number.parseInt(event.target.value, 10);
+            replaceSettings({ lockTimeoutMinutes: minutes });
+            window.localStorage.setItem("focusbridge.lockTimeoutMinutes", String(minutes));
+            window.dispatchEvent(new Event("focusbridge://lock-timeout-updated"));
+            void invoke("set_lock_timeout_minutes", { minutes }).catch((error) => {
+              setWindowsSetupMessage(`Lock timeout update failed: ${String(error)}`);
+            });
+          }}
+          className="mt-4 w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+        >
+          <option value={0}>Unlimited</option>
+          <option value={1}>1 minute</option>
+          <option value={5}>5 minutes</option>
+          <option value={15}>15 minutes</option>
+          <option value={30}>30 minutes</option>
+          <option value={60}>1 hour</option>
+        </select>
+        <p className="mt-3 text-xs leading-5 text-text-muted">
+          Local unlock now accepts either an 8+ character password or a 4+ digit PIN. Native
+          biometric unlock needs Windows Hello/macOS Touch ID integration and is tracked separately.
+        </p>
       </div>
 
       <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">

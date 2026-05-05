@@ -5,6 +5,7 @@ import logo from "../assets/logo.png";
 interface AuthStatus {
   configured: boolean;
   relayEmail?: string | null;
+  lockTimeoutMinutes: number;
 }
 
 interface GoogleSignInResult {
@@ -25,15 +26,52 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [email, setEmail] = useState("");
+  const [lockTimeoutMinutes, setLockTimeoutMinutes] = useState(0);
+  const [lastActivity, setLastActivity] = useState(Date.now());
 
   useEffect(() => {
     invoke<AuthStatus>("auth_status")
       .then((status) => {
         setConfigured(status.configured);
         setRelayEmail(status.relayEmail ?? null);
+        setLockTimeoutMinutes(status.lockTimeoutMinutes ?? 0);
+        window.localStorage.setItem("focusbridge.lockTimeoutMinutes", String(status.lockTimeoutMinutes ?? 0));
       })
       .catch((err) => setError(String(err)));
   }, []);
+
+  useEffect(() => {
+    const syncTimeout = () => {
+      const value = Number.parseInt(
+        window.localStorage.getItem("focusbridge.lockTimeoutMinutes") ?? "0",
+        10,
+      );
+      setLockTimeoutMinutes(Number.isFinite(value) ? value : 0);
+    };
+    window.addEventListener("focusbridge://lock-timeout-updated", syncTimeout);
+    window.addEventListener("storage", syncTimeout);
+    return () => {
+      window.removeEventListener("focusbridge://lock-timeout-updated", syncTimeout);
+      window.removeEventListener("storage", syncTimeout);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!unlocked || lockTimeoutMinutes <= 0) return;
+    const markActivity = () => setLastActivity(Date.now());
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "focus"];
+    events.forEach((event) => window.addEventListener(event, markActivity, { passive: true }));
+    const timer = window.setInterval(() => {
+      if (Date.now() - lastActivity >= lockTimeoutMinutes * 60_000) {
+        setUnlocked(false);
+        setPassword("");
+      }
+    }, 5_000);
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, markActivity));
+      window.clearInterval(timer);
+    };
+  }, [lastActivity, lockTimeoutMinutes, unlocked]);
 
   const submit = async () => {
     setError(null);
@@ -45,6 +83,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         setConfigured(true);
       }
       setUnlocked(true);
+      setLastActivity(Date.now());
       setPassword("");
     } catch (err) {
       setError(String(err));
@@ -113,13 +152,13 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
               FocusBridge Secure
             </p>
             <h1 className="text-2xl font-black text-text-primary">
-              {configured ? "Unlock app" : "Create app password"}
+          {configured ? "Unlock app" : "Create app password or PIN"}
             </h1>
           </div>
         </div>
         <p className="mt-4 text-sm leading-6 text-text-secondary">
           {relayEmail
-            ? `Signed in as ${relayEmail}. ${configured ? "Unlock your local app vault." : "Create a local app password for this desktop."}`
+            ? `Signed in as ${relayEmail}. ${configured ? "Unlock your local app vault." : "Create a local password or PIN for this desktop."}`
             : "Sign in with Google through your FocusBridge relay, then unlock the local app vault."}
         </p>
         <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
@@ -181,7 +220,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           type="password"
           autoFocus
           className="mt-5 w-full rounded-2xl border border-border-subtle bg-bg-secondary/80 px-4 py-3 text-text-primary outline-none transition focus:border-border-hover"
-          placeholder="Password"
+          placeholder="Password or PIN"
         />
         {error && <p className="mt-3 text-sm font-semibold text-[#8f3324]">{error}</p>}
         <button

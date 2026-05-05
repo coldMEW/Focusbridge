@@ -167,6 +167,14 @@ button {
   color: var(--text-secondary);
   font-size: 0.75rem;
   font-weight: 700;
+  min-width: 8.5rem;
+  transform: translateZ(0);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+  will-change: transform;
 }
 
 .connection-led {
@@ -174,6 +182,11 @@ button {
   width: 0.65rem;
   height: 0.65rem;
   border-radius: 999px;
+  flex: 0 0 auto;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .connection-led::after {

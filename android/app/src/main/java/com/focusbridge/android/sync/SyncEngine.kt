@@ -29,6 +29,10 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun connectActivePairing() {
+        connectActivePairing(flushAfterConnect = true)
+    }
+
+    private suspend fun connectActivePairing(flushAfterConnect: Boolean) {
         var connectedNow = false
         connectMutex.withLock {
             if (client.isConnected()) {
@@ -47,17 +51,17 @@ class SyncEngine @Inject constructor(
                 }
             }
         }
-        if (connectedNow) {
+        if (connectedNow && flushAfterConnect) {
             flushPending()
         }
     }
 
     suspend fun send(notification: NotificationEntity) {
         if (!client.isConnected()) {
-            connectActivePairing()
+            connectActivePairing(flushAfterConnect = false)
         }
         if (client.send(Protocol.notification(notification))) return
-        connectActivePairing()
+        connectActivePairing(flushAfterConnect = false)
         client.send(Protocol.notification(notification))
     }
 

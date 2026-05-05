@@ -4,6 +4,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.processor.NotificationProcessor
+import com.focusbridge.android.processor.stableNotificationId
 import com.focusbridge.android.sync.SyncEngine
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +31,7 @@ class NotificationService : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         scope.launch {
-            notifications.markSent("${sbn.packageName}:${sbn.id}:${sbn.postTime}")
+            notifications.markSent(stableNotificationId(sbn.key, sbn.packageName, sbn.id, sbn.tag))
         }
     }
 }

@@ -12,6 +12,7 @@ pub struct SettingsSnapshot {
     pub priority_keywords: Vec<String>,
     pub blocked_keywords: Vec<String>,
     pub sync_mode: String,
+    pub lock_timeout_minutes: u32,
 }
 
 #[tauri::command]
@@ -26,6 +27,11 @@ pub fn get_settings(state: tauri::State<'_, AppState>) -> SettingsSnapshot {
         priority_keywords: csv_setting(&state, "priority_keywords"),
         blocked_keywords: csv_setting(&state, "blocked_keywords"),
         favorite_contacts: csv_setting(&state, "favorite_contacts"),
+        lock_timeout_minutes: store::get_setting(&state.db_path, "lock_timeout_minutes")
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
         sync_mode: "LOCAL".into(),
         ..Default::default()
     }
@@ -62,6 +68,18 @@ pub fn set_rule_text(
         let _ = state.send_to_phone(message);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_lock_timeout_minutes(
+    minutes: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if minutes > 24 * 60 {
+        return Err("lock timeout cannot exceed 24 hours".into());
+    }
+    store::set_setting(&state.db_path, "lock_timeout_minutes", &minutes.to_string())
+        .map_err(|e| e.to_string())
 }
 
 fn csv_setting(state: &tauri::State<'_, AppState>, key: &str) -> Vec<String> {

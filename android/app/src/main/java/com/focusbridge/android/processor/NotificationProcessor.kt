@@ -7,7 +7,6 @@ import com.focusbridge.android.data.repository.ConfigRepository
 import com.focusbridge.android.priority.Priority
 import com.focusbridge.android.priority.PriorityEngine
 import com.focusbridge.android.processor.parsers.DefaultParser
-import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 
@@ -37,7 +36,7 @@ class NotificationProcessor @Inject constructor(
         if (rules.studyModeEnabled && appRule?.studySafe != true && priority < Priority.HIGH) return null
         val masked = parsed.contentHidden || rules.privacyMode
         return NotificationEntity(
-            id = "${sbn.packageName}:${sbn.id}:${sbn.postTime}:${UUID.randomUUID()}",
+            id = stableNotificationId(sbn.key, sbn.packageName, sbn.id, sbn.tag),
             appName = parsed.appName,
             packageName = parsed.packageName,
             sender = parsed.sender,
@@ -49,6 +48,13 @@ class NotificationProcessor @Inject constructor(
         )
     }
 }
+
+internal fun stableNotificationId(
+    key: String?,
+    packageName: String,
+    id: Int,
+    tag: String?,
+): String = key?.takeIf { it.isNotBlank() } ?: "$packageName:$id:${tag.orEmpty()}"
 
 private data class ProcessorRules(
     val privacyMode: Boolean,

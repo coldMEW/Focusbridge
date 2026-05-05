@@ -20,6 +20,7 @@ const ITERATIONS: u32 = 210_000;
 pub struct AuthStatus {
     pub configured: bool,
     pub relay_email: Option<String>,
+    pub lock_timeout_minutes: u32,
 }
 
 #[tauri::command]
@@ -32,6 +33,11 @@ pub fn auth_status(state: tauri::State<'_, AppState>) -> AuthStatus {
         relay_email: store::get_setting(&state.db_path, "relay_auth_email")
             .ok()
             .flatten(),
+        lock_timeout_minutes: store::get_setting(&state.db_path, "lock_timeout_minutes")
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
     }
 }
 
@@ -195,8 +201,14 @@ pub async fn auth_google_sign_in(
 }
 
 fn validate_password(password: &str) -> Result<(), String> {
-    if password.len() < 10 {
-        return Err("password must be at least 10 characters".into());
+    if password.chars().all(|ch| ch.is_ascii_digit()) {
+        if password.len() < 4 {
+            return Err("PIN must be at least 4 digits".into());
+        }
+        return Ok(());
+    }
+    if password.len() < 8 {
+        return Err("password must be at least 8 characters".into());
     }
     Ok(())
 }

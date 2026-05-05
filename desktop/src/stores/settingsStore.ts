@@ -20,6 +20,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   blockedKeywords: [],
   twoFaModeEnabled: false,
   syncMode: "LOCAL",
+  lockTimeoutMinutes: 0,
   activeFilter: "ALL",
   setStudyMode: (on) => set({ studyModeEnabled: on }),
   setTwoFaMode: (on) => set({ twoFaModeEnabled: on }),

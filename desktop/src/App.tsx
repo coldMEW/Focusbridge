@@ -40,6 +40,7 @@ interface NativeSettingsSnapshot {
   priority_keywords?: string[];
   blocked_keywords?: string[];
   sync_mode?: "LOCAL" | "CLOUD";
+  lock_timeout_minutes?: number;
 }
 
 function fromNative(row: NativeNotificationRow): Notification {
@@ -88,6 +89,7 @@ export default function App() {
             : ["urgent", "asap", "emergency"],
           blockedKeywords: settings.blocked_keywords ?? [],
           syncMode: settings.sync_mode ?? "LOCAL",
+          lockTimeoutMinutes: settings.lock_timeout_minutes ?? 0,
         }),
       )
       .catch((error) => console.warn("Unable to hydrate settings", error));
