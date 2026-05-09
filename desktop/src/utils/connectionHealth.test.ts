@@ -16,10 +16,19 @@ describe("desktop connection health", () => {
   it("downgrades stale heartbeat connections to disconnected", () => {
     expect(
       desktopConnectionStateFromDiagnostics(
-        { connected: true, lastHeartbeatAt: now - 46_000 },
+        { connected: true, lastHeartbeatAt: now - 121_000 },
         now,
       ),
     ).toBe("DISCONNECTED");
+  });
+
+  it("tolerates short Android background heartbeat delays", () => {
+    expect(
+      desktopConnectionStateFromDiagnostics(
+        { connected: true, lastHeartbeatAt: now - 75_000 },
+        now,
+      ),
+    ).toBe("CONNECTED");
   });
 
   it("treats connected sockets without first heartbeat as connecting briefly", () => {
@@ -34,7 +43,7 @@ describe("desktop connection health", () => {
   it("downgrades connected sockets with no heartbeat after grace window", () => {
     expect(
       desktopConnectionStateFromDiagnostics(
-        { connected: true, lastHeartbeatAt: null, connectedAt: now - 16_000 },
+        { connected: true, lastHeartbeatAt: null, connectedAt: now - 31_000 },
         now,
       ),
     ).toBe("DISCONNECTED");

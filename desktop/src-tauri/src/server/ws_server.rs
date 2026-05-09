@@ -97,7 +97,7 @@ where
     loop {
         let msg = tokio::select! {
             _ = stale_check.tick() => {
-                if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 45_000 {
+                if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 120_000 {
                     state.mark_stale_connection("phone heartbeat timeout");
                     app.emit("focusbridge://connection", "DISCONNECTED")?;
                     if notified_connected {
@@ -142,22 +142,46 @@ where
             .unwrap_or_default();
         let expected_key = active_pairing_key
             .as_deref()
-            .unwrap_or(current_pairing_key.as_str());
+            .unwrap_or(current_pairing_key.as_str())
+            .to_string();
         if envelope.r#type == MessageType::Encrypted {
-            let decrypted = decrypt_payload(expected_key, &envelope.payload)?;
+            let decrypted = decrypt_payload(&expected_key, &envelope.payload)?;
             envelope =
                 serde_json::from_str(&decrypted).context("parse encrypted focusbridge envelope")?;
         }
 
-        match handle_envelope(&envelope, expected_key) {
+        match handle_envelope(&envelope, &expected_key) {
             IncomingDecision::AuthAccepted => {
                 info!(peer = %peer, "phone authenticated");
-                active_pairing_key = Some(expected_key.to_string());
+                active_pairing_key = Some(expected_key.clone());
                 last_phone_seen_at = now_ms() as i64;
                 state.set_phone_sender(outbound_tx.clone());
+                let device_id = envelope
+                    .payload
+                    .get("deviceId")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("android-phone");
+                let device_name = envelope
+                    .payload
+                    .get("deviceName")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("Android phone");
+                let cert_fingerprint = state
+                    .current_pairing()
+                    .map(|session| session.cert_fingerprint)
+                    .unwrap_or_default();
+                let endpoint = peer.ip().to_string();
+                store::mark_pairing_connected(
+                    &state.db_path,
+                    device_name,
+                    device_id,
+                    &expected_key,
+                    &endpoint,
+                    &cert_fingerprint,
+                )?;
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
                     format!(
-                        r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":10000,"maxMessageSize":1048576}}}}}}"#,
+                        r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":15000,"heartbeatTimeout":120000,"maxMessageSize":1048576}}}}}}"#,
                         now_ms()
                     ),
                 ))

@@ -1,6 +1,6 @@
 # FocusBridge Project Memory
 
-Last updated: 2026-05-04
+Last updated: 2026-05-08
 
 ## Product
 
@@ -15,6 +15,11 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 ## Most Recent Work
 
+- Current production patch hardens LAN sync against Android background jitter: desktop heartbeat tolerance is now 120 seconds, Android sends 15-second app pings and waits 120 seconds before declaring heartbeat timeout, and `AUTH_OK` advertises the longer heartbeat config.
+- Desktop now has a real manual `Disconnect phone` command in diagnostics. It sends an encrypted `UNPAIR` envelope to the active phone, marks diagnostics as manual disconnect, and Android persists a `manual_disconnect` flag so the foreground reconnect supervisor does not immediately reconnect until the user pairs again.
+- Desktop now records paired devices on successful WebSocket auth, including phone name, endpoint, and last connected timestamp. The pairing screen shows a previous-connections section with green/red status dots and reconnect guidance.
+- Pairing QR/manual payload layout was tightened for narrow right panels: the panel is `min-width: 0`, QR image is constrained to the card, and the manual payload uses internal scrolling plus aggressive wrapping so it stays inside the pairing section on different monitor sizes.
+- Latest release artifacts were rebuilt and copied to `FocusBridge-v1.0.0-latest-release`: `FocusBridge_1.0.0_x64_en-US.msi` and `FocusBridge-Android-1.0.0-release.apk`.
 - Current local slice fixes the first-run Android basics: responsive compact layout, Android 13+ notification runtime prompt, notification-listener status card, CameraX/ZXing QR scanner with camera permission request, manual pairing fallback that starts sync, cleartext local WS permission for MVP LAN pairing, and proper Material icons/buttons across APK navigation and setup actions.
 - Latest sync hardening fixes two concrete local-connection blockers: Android foreground sync now reconnects on every service start command after pairing is saved, and Android stores/tries multiple desktop endpoint candidates from the QR instead of failing forever on one stale/wrong Windows adapter IP.
 - Desktop QR now advertises multiple local IPv4 candidates, refreshes when the desktop window regains focus or the QR is near expiry, and includes a manual `Refresh QR / network` button for Wi-Fi/hotspot changes.

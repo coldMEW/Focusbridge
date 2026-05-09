@@ -3,6 +3,7 @@ package com.focusbridge.android.sync
 import com.focusbridge.android.data.local.NotificationEntity
 import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.data.repository.PairingRepository
+import com.focusbridge.android.data.repository.ConfigRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -16,12 +17,13 @@ class SyncEngine @Inject constructor(
     private val pairings: PairingRepository,
     private val notifications: NotificationRepository,
     private val client: WebSocketClient,
+    private val config: ConfigRepository,
 ) {
     private val connectMutex = Mutex()
 
     suspend fun maintainActivePairing() {
         while (true) {
-            if (!client.isConnected()) {
+            if (!client.isConnected() && !isManuallyDisconnected()) {
                 connectActivePairing()
             }
             delay(RECONNECT_INTERVAL_MS)
@@ -39,6 +41,7 @@ class SyncEngine @Inject constructor(
                 connectedNow = true
                 return@withLock
             }
+            if (isManuallyDisconnected()) return@withLock
             val pairing = pairings.active() ?: return@withLock
             for (endpoint in pairing.candidateEndpoints()) {
                 client.connect(pairing, endpointOverride = endpoint, retryingOnFailure = true)
@@ -69,6 +72,9 @@ class SyncEngine @Inject constructor(
     suspend fun flushPending() {
         notifications.pending().forEach { send(it) }
     }
+
+    private suspend fun isManuallyDisconnected(): Boolean =
+        config.get("manual_disconnect") == "true"
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 4_000L

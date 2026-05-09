@@ -15,10 +15,12 @@ pub struct NotificationRow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PairedDeviceRow {
     pub id: i64,
     pub device_name: String,
     pub device_id: String,
+    #[serde(skip_serializing)]
     pub pairing_key: String,
     pub mode: String,
     pub endpoint: Option<String>,

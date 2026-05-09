@@ -76,6 +76,16 @@ impl AppState {
             .expect("phone sender lock poisoned") = None;
     }
 
+    pub fn mark_manual_disconnect(&self) {
+        self.clear_phone_sender();
+        self.update_diagnostics(|diag| {
+            diag.connected = false;
+            diag.connected_at = None;
+            diag.active_transport = "none".into();
+            diag.last_disconnect_reason = Some("manual disconnect".into());
+        });
+    }
+
     pub fn clear_phone_sender_if_current(&self, sender: &UnboundedSender<String>) {
         let mut current = self
             .phone_sender

@@ -1,7 +1,7 @@
 import type { ConnectionState } from "../types";
 
-export const STALE_HEARTBEAT_MS = 45_000;
-export const FIRST_HEARTBEAT_GRACE_MS = 15_000;
+export const STALE_HEARTBEAT_MS = 120_000;
+export const FIRST_HEARTBEAT_GRACE_MS = 30_000;
 
 export interface ConnectionHealthSnapshot {
   connected: boolean;

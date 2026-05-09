@@ -3,10 +3,12 @@ use crate::pairing::device_store::PairingSession;
 use crate::pairing::qr_generator::{make_qr, QrOutput, QrPayload};
 use crate::state::AppState;
 use rand::RngCore;
+use serde_json::json;
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::Emitter;
 use uuid::Uuid;
 
 fn now_millis() -> i64 {
@@ -161,4 +163,32 @@ pub fn consume_pairing(
         &session.cert_fingerprint,
     )
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_paired_devices(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<crate::db::models::PairedDeviceRow>, String> {
+    store::list_paired_devices(&state.db_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn disconnect_phone(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let message = serde_json::to_string(&json!({
+        "version": 1,
+        "type": "UNPAIR",
+        "payload": {
+            "reason": "manual_disconnect"
+        }
+    }))
+    .map_err(|e| e.to_string())?;
+    let _ = state.send_to_phone(message);
+    store::mark_pairings_disconnected(&state.db_path).map_err(|e| e.to_string())?;
+    state.mark_manual_disconnect();
+    app.emit("focusbridge://connection", "DISCONNECTED")
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

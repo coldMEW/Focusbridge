@@ -60,6 +60,8 @@ pub fn run() {
             commands::diagnostics_cmd::get_connection_diagnostics,
             commands::pairing_cmd::generate_pairing_qr,
             commands::pairing_cmd::consume_pairing,
+            commands::pairing_cmd::list_paired_devices,
+            commands::pairing_cmd::disconnect_phone,
             commands::settings_cmd::get_settings,
             commands::settings_cmd::set_lock_timeout_minutes,
             commands::settings_cmd::set_study_mode,

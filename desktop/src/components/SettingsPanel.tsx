@@ -27,6 +27,7 @@ export default function SettingsPanel() {
   const [clearMessage, setClearMessage] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [disconnectMessage, setDisconnectMessage] = useState<string | null>(null);
   const [windowsSetupMessage, setWindowsSetupMessage] = useState<string | null>(null);
   const studyMode = useSettingsStore((s) => s.studyModeEnabled);
   const twoFaMode = useSettingsStore((s) => s.twoFaModeEnabled);
@@ -87,6 +88,17 @@ export default function SettingsPanel() {
     saveLockTimeout(lockTimeoutMinutesFrom(value, lockUnit));
   };
 
+  const disconnectPhone = async () => {
+    setDisconnectMessage("Disconnecting phone...");
+    try {
+      await invoke("disconnect_phone");
+      setDisconnectMessage("Phone sync disconnected. Reconnect from Pairing when you want it back.");
+      refreshDiagnostics();
+    } catch (error) {
+      setDisconnectMessage(`Disconnect failed: ${String(error)}`);
+    }
+  };
+
   return (
     <section className="glass-panel rounded-[32px] p-5">
       <p className="text-xs font-semibold uppercase tracking-[0.24em] text-text-muted">
@@ -126,12 +138,12 @@ export default function SettingsPanel() {
               hotspot until relay mode ships.
             </p>
           </div>
-          <button
-            onClick={refreshDiagnostics}
-            className="rounded-full border border-border-subtle px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-border-hover hover:text-text-primary"
-          >
-            Refresh
-          </button>
+            <button
+              onClick={refreshDiagnostics}
+              className="rounded-full border border-border-subtle px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-border-hover hover:text-text-primary"
+            >
+              Refresh
+            </button>
         </div>
         {diagnosticsError && <p className="mt-3 text-xs text-[#9b4b3d]">{diagnosticsError}</p>}
         {diagnostics && (
@@ -171,6 +183,15 @@ export default function SettingsPanel() {
                 {diagnostics.certificateFingerprint}
               </div>
             </div>
+            <button
+              onClick={() => void disconnectPhone()}
+              className="w-full rounded-full border border-[#f0b8aa] bg-[#fff0eb] px-4 py-2 text-sm font-semibold text-[#8f3324] transition hover:-translate-y-0.5 hover:bg-[#ffe4dc] active:translate-y-0 active:scale-95"
+            >
+              Disconnect phone
+            </button>
+            {disconnectMessage && (
+              <p className="text-xs leading-5 text-text-muted">{disconnectMessage}</p>
+            )}
           </div>
         )}
       </div>

@@ -140,6 +140,17 @@ object Protocol {
             ),
         )
 
+    fun disconnectRequest(): String =
+        json.encodeToString(
+            Envelope.serializer(),
+            Envelope(
+                type = MessageType.UNPAIR,
+                payload = buildJsonObject {
+                    put("reason", "manual_disconnect")
+                },
+            ),
+        )
+
     fun status(
         studyModeEnabled: Boolean,
         notificationsCaptured: Int,

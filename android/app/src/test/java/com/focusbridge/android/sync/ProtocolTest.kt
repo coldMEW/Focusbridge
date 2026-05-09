@@ -78,6 +78,14 @@ class ProtocolTest {
     }
 
     @Test
+    fun disconnectRequestUsesUnpairEnvelope() {
+        val envelope = Protocol.decodeEnvelope(Protocol.disconnectRequest())
+
+        assertEquals(MessageType.UNPAIR, envelope.type)
+        assertTrue(Protocol.json.encodeToString(Envelope.serializer(), envelope).contains("\"reason\":\"manual_disconnect\""))
+    }
+
+    @Test
     fun statusUsesProtocolEnvelope() {
         val envelope = Protocol.decodeEnvelope(
             Protocol.status(

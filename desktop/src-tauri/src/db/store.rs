@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::path::Path;
 
-use super::models::{AppRuleRow, NotificationRow};
+use super::models::{AppRuleRow, NotificationRow, PairedDeviceRow};
 
 pub fn init(db_path: &Path) -> Result<()> {
     if let Some(parent) = db_path.parent() {
@@ -308,6 +308,8 @@ pub fn save_pairing(
     cert_fingerprint: &str,
 ) -> Result<()> {
     let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.execute("UPDATE paired_devices SET is_active = 0", [])
+        .context("deactivate previous pairings")?;
     conn.execute(
         "INSERT INTO paired_devices (
             device_name, device_id, pairing_key, mode, endpoint, cert_fingerprint, is_active, created_at
@@ -328,6 +330,78 @@ pub fn save_pairing(
     )
     .context("save pairing")?;
     Ok(())
+}
+
+pub fn mark_pairing_connected(
+    db_path: &Path,
+    device_name: &str,
+    device_id: &str,
+    pairing_key: &str,
+    endpoint: &str,
+    cert_fingerprint: &str,
+) -> Result<()> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let now = now_millis();
+    conn.execute("UPDATE paired_devices SET is_active = 0", [])
+        .context("deactivate previous pairings")?;
+    conn.execute(
+        "INSERT INTO paired_devices (
+            device_name, device_id, pairing_key, mode, endpoint, cert_fingerprint, is_active, created_at, last_connected_at
+        ) VALUES (?1, ?2, ?3, 'LOCAL', ?4, ?5, 1, ?6, ?6)
+        ON CONFLICT(device_id) DO UPDATE SET
+            device_name=excluded.device_name,
+            pairing_key=excluded.pairing_key,
+            endpoint=excluded.endpoint,
+            cert_fingerprint=excluded.cert_fingerprint,
+            is_active=1,
+            last_connected_at=excluded.last_connected_at",
+        params![
+            device_name,
+            device_id,
+            pairing_key,
+            endpoint,
+            cert_fingerprint,
+            now,
+        ],
+    )
+    .context("mark pairing connected")?;
+    Ok(())
+}
+
+pub fn mark_pairings_disconnected(db_path: &Path) -> Result<()> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.execute("UPDATE paired_devices SET is_active = 0", [])
+        .context("mark paired devices disconnected")?;
+    Ok(())
+}
+
+pub fn list_paired_devices(db_path: &Path) -> Result<Vec<PairedDeviceRow>> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, device_name, device_id, pairing_key, mode, endpoint, cert_fingerprint, is_active, created_at, last_connected_at
+             FROM paired_devices
+             ORDER BY COALESCE(last_connected_at, created_at) DESC",
+        )
+        .context("prepare paired devices list")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(PairedDeviceRow {
+                id: row.get(0)?,
+                device_name: row.get(1)?,
+                device_id: row.get(2)?,
+                pairing_key: row.get(3)?,
+                mode: row.get(4)?,
+                endpoint: row.get(5)?,
+                cert_fingerprint: row.get(6)?,
+                is_active: row.get(7)?,
+                created_at: row.get(8)?,
+                last_connected_at: row.get(9)?,
+            })
+        })
+        .context("query paired devices")?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect paired devices")
 }
 
 fn notification_from_payload(payload: &Value) -> NotificationRow {

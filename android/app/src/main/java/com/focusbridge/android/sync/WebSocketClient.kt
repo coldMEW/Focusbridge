@@ -95,6 +95,7 @@ class WebSocketClient @Inject constructor(
                         }
                         MessageType.NOTIFICATION_ACK -> applyNotificationAck(envelope)
                         MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope, pairing.pairingKey)
+                        MessageType.UNPAIR -> applyManualDisconnect(webSocket, serial)
                         else -> Unit
                     }
                 }
@@ -138,6 +139,16 @@ class WebSocketClient @Inject constructor(
         stopHeartbeat()
         if (showDisconnected && _state.value != ConnectionState.DISCONNECTED) {
             _state.value = ConnectionState.DISCONNECTED
+        }
+    }
+
+    private fun applyManualDisconnect(webSocket: WebSocket, serial: Int) {
+        scope.launch {
+            config.set("manual_disconnect", "true")
+            webSocket.close(1000, "Desktop requested manual disconnect")
+            if (serial == connectionSerial) {
+                disconnect(showDisconnected = true)
+            }
         }
     }
 
@@ -208,7 +219,7 @@ class WebSocketClient @Inject constructor(
     }
 
     private companion object {
-        const val HEARTBEAT_INTERVAL_MS = 10_000L
-        const val HEARTBEAT_TIMEOUT_MS = 25_000L
+        const val HEARTBEAT_INTERVAL_MS = 15_000L
+        const val HEARTBEAT_TIMEOUT_MS = 120_000L
     }
 }

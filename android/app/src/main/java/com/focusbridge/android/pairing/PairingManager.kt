@@ -1,6 +1,7 @@
 package com.focusbridge.android.pairing
 
 import com.focusbridge.android.data.local.PairingEntity
+import com.focusbridge.android.data.repository.ConfigRepository
 import com.focusbridge.android.data.repository.PairingRepository
 import java.net.URI
 import java.net.URLDecoder
@@ -63,6 +64,7 @@ private fun String.toRelayWebSocketBase(): String {
 
 class PairingManager @Inject constructor(
     private val repository: PairingRepository,
+    private val config: ConfigRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -78,6 +80,7 @@ class PairingManager @Inject constructor(
             mode = payload.mode.uppercase(),
         )
         repository.save(pairing)
+        config.set("manual_disconnect", "false")
         return pairing
     }
 }
