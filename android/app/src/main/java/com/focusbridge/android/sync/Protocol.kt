@@ -43,6 +43,7 @@ data class AuthPayload(
     val pairingKey: String,
     val deviceId: String,
     val deviceName: String,
+    val phoneInstallId: String,
     val role: String = "phone",
 )
 
@@ -85,20 +86,27 @@ data class NotificationAckPayload(
     val serverTime: Long,
 )
 
+@Serializable
+data class DesktopActionPayload(
+    val action: String,
+    val deviceId: String? = null,
+    val requestedAt: Long = 0,
+)
+
 object Protocol {
     val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
 
-    fun auth(pairingKey: String, deviceId: String, deviceName: String): String =
+    fun auth(pairingKey: String, deviceId: String, deviceName: String, phoneInstallId: String): String =
         json.encodeToString(
             Envelope.serializer(),
             Envelope(
                 type = MessageType.AUTH,
                 payload = json.encodeToJsonElement(
                     AuthPayload.serializer(),
-                    AuthPayload(pairingKey, deviceId, deviceName),
+                    AuthPayload(pairingKey, deviceId, deviceName, phoneInstallId),
                 ),
             ),
         )
@@ -190,6 +198,9 @@ object Protocol {
 
     fun decodeNotificationAck(payload: JsonElement): NotificationAckPayload =
         json.decodeFromJsonElement(NotificationAckPayload.serializer(), payload)
+
+    fun decodeDesktopAction(payload: JsonElement): DesktopActionPayload =
+        json.decodeFromJsonElement(DesktopActionPayload.serializer(), payload)
 
     fun rulesAck(appliedCount: Int): String =
         json.encodeToString(

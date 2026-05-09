@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNotificationStore } from "../stores/notificationStore";
 import { useSettingsStore } from "../stores/settingsStore";
+import { useStudyMode } from "../hooks/useStudyMode";
 import {
   lockTimeoutLabel,
   lockTimeoutMinutesFrom,
@@ -20,7 +21,21 @@ interface DiagnosticsSnapshot {
   lastDisconnectReason?: string | null;
 }
 
-export default function SettingsPanel() {
+interface RecoverySnapshot {
+  configured: boolean;
+  recoveryQuestion?: string | null;
+}
+
+const SECURITY_QUESTIONS = [
+  "What city were you born in?",
+  "What was the name of your first school?",
+  "What was your childhood nickname?",
+  "What is the name of your favorite teacher?",
+  "What was the model of your first phone?",
+  "Custom question",
+];
+
+export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean }) {
   const [customDays, setCustomDays] = useState("14");
   const [lockValue, setLockValue] = useState("15");
   const [lockUnit, setLockUnit] = useState<LockTimeoutUnit>("minute");
@@ -29,7 +44,15 @@ export default function SettingsPanel() {
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
   const [disconnectMessage, setDisconnectMessage] = useState<string | null>(null);
   const [windowsSetupMessage, setWindowsSetupMessage] = useState<string | null>(null);
-  const studyMode = useSettingsStore((s) => s.studyModeEnabled);
+  const [recoveryQuestion, setRecoveryQuestion] = useState<string | null>(null);
+  const [recoveryAnswer, setRecoveryAnswer] = useState("");
+  const [newLocalSecret, setNewLocalSecret] = useState("");
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
+  const [securityQuestion, setSecurityQuestion] = useState("");
+  const [customSecurityQuestion, setCustomSecurityQuestion] = useState("");
+  const [newSecurityAnswer, setNewSecurityAnswer] = useState("");
+  const [securityQuestionMessage, setSecurityQuestionMessage] = useState<string | null>(null);
+  const { on: studyMode, toggle: toggleStudyMode } = useStudyMode();
   const twoFaMode = useSettingsStore((s) => s.twoFaModeEnabled);
   const setTwoFaMode = useSettingsStore((s) => s.setTwoFaMode);
   const syncMode = useSettingsStore((s) => s.syncMode);
@@ -49,6 +72,19 @@ export default function SettingsPanel() {
 
   useEffect(() => {
     refreshDiagnostics();
+    invoke<RecoverySnapshot>("auth_status")
+      .then((status) => {
+        const question = status.recoveryQuestion ?? null;
+        setRecoveryQuestion(question);
+        if (!question) return;
+        if (SECURITY_QUESTIONS.includes(question)) {
+          setSecurityQuestion(question);
+        } else {
+          setSecurityQuestion("Custom question");
+          setCustomSecurityQuestion(question);
+        }
+      })
+      .catch(() => setRecoveryQuestion(null));
     const timer = window.setInterval(refreshDiagnostics, 30_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -99,8 +135,57 @@ export default function SettingsPanel() {
     }
   };
 
+  const resetLocalSecret = async () => {
+    setRecoveryMessage("Checking security answer...");
+    try {
+      await invoke("auth_reset_password_with_recovery", {
+        securityAnswer: recoveryAnswer,
+        newPassword: newLocalSecret,
+      });
+      setRecoveryAnswer("");
+      setNewLocalSecret("");
+      setRecoveryMessage("Local PIN/password updated. Use the new secret next time FocusBridge locks.");
+    } catch (error) {
+      setRecoveryMessage(`Reset failed: ${String(error)}`);
+    }
+  };
+
+  const updateSecurityQuestion = async () => {
+    const selectedQuestion =
+      securityQuestion === "Custom question" ? customSecurityQuestion : securityQuestion;
+    setSecurityQuestionMessage("Saving security question...");
+    try {
+      await invoke("auth_update_recovery", {
+        securityQuestion: selectedQuestion,
+        securityAnswer: newSecurityAnswer,
+      });
+      setRecoveryQuestion(selectedQuestion);
+      setNewSecurityAnswer("");
+      setSecurityQuestionMessage("Security question updated.");
+    } catch (error) {
+      setSecurityQuestionMessage(`Update failed: ${String(error)}`);
+    }
+  };
+
   return (
-    <section className="glass-panel rounded-[32px] p-5">
+    <section className={fullPage ? "min-w-0" : "glass-panel rounded-[32px] p-5"}>
+      {fullPage && (
+        <div className="mb-5 rounded-[32px] border border-border-subtle bg-bg-secondary/60 p-5">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-accent-study">
+            Settings
+          </p>
+          <h3 className="mt-2 text-3xl font-semibold tracking-[-0.04em]">
+            App lock and recovery.
+          </h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
+            Configure the lock timer, reset your local PIN/password, and manage the security question.
+          </p>
+        </div>
+      )}
+      <div className={fullPage ? "mx-auto grid w-full max-w-3xl gap-5" : ""}>
+      {!fullPage && (
+      <>
+      <div className={fullPage ? "rounded-[32px] border border-border-subtle bg-bg-secondary/60 p-5" : ""}>
       <p className="text-xs font-semibold uppercase tracking-[0.24em] text-text-muted">
         Focus rules
       </p>
@@ -113,6 +198,7 @@ export default function SettingsPanel() {
           label="Study Mode"
           value={studyMode ? "Filtering low priority alerts" : "Ready when you are"}
           active={studyMode}
+          onClick={toggleStudyMode}
         />
         <button
           className="rule-row w-full text-left"
@@ -125,6 +211,7 @@ export default function SettingsPanel() {
           <span className={twoFaMode ? "toggle-dot active" : "toggle-dot"} />
         </button>
         <RuleRow label="Sync mode" value={syncMode === "LOCAL" ? "Local LAN only" : "Cloud relay"} active />
+      </div>
       </div>
 
       <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
@@ -183,21 +270,29 @@ export default function SettingsPanel() {
                 {diagnostics.certificateFingerprint}
               </div>
             </div>
-            <button
-              onClick={() => void disconnectPhone()}
-              className="w-full rounded-full border border-[#f0b8aa] bg-[#fff0eb] px-4 py-2 text-sm font-semibold text-[#8f3324] transition hover:-translate-y-0.5 hover:bg-[#ffe4dc] active:translate-y-0 active:scale-95"
-            >
-              Disconnect phone
-            </button>
-            {disconnectMessage && (
-              <p className="text-xs leading-5 text-text-muted">{disconnectMessage}</p>
+            {diagnostics.connected && (
+              <>
+                <button
+                  onClick={() => void disconnectPhone()}
+                  className="w-full rounded-full border border-[#f0b8aa] bg-[#fff0eb] px-4 py-2 text-sm font-semibold text-[#8f3324] transition hover:-translate-y-0.5 hover:bg-[#ffe4dc] active:translate-y-0 active:scale-95"
+                >
+                  Disconnect phone
+                </button>
+                {disconnectMessage && (
+                  <p className="text-xs leading-5 text-text-muted">{disconnectMessage}</p>
+                )}
+              </>
             )}
           </div>
         )}
       </div>
+      </>
+      )}
 
-      <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
-        <div className="flex items-start justify-between gap-3">
+      {fullPage && (
+      <>
+      <div className="rounded-[32px] border border-border-subtle bg-bg-secondary/70 p-6 shadow-soft">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
               App lock
@@ -215,7 +310,7 @@ export default function SettingsPanel() {
             </div>
           </div>
         </div>
-        <div className="mt-4 flex gap-2 overflow-x-auto pb-2">
+        <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
           {[
             [0, "Unlimited"],
             [5, "5 min"],
@@ -240,8 +335,8 @@ export default function SettingsPanel() {
             </button>
           ))}
         </div>
-        <div className="mt-3 rounded-3xl border border-border-subtle bg-bg-primary/60 p-3">
-          <div className="flex gap-2">
+        <div className="mt-4 rounded-3xl border border-border-subtle bg-bg-primary/60 p-4">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
             <input
               value={lockValue}
               onChange={(event) => setLockValue(event.target.value)}
@@ -256,7 +351,7 @@ export default function SettingsPanel() {
               Set
             </button>
           </div>
-          <div className="mt-3 grid grid-cols-4 gap-2">
+          <div className="mt-4 grid grid-cols-4 gap-2">
             {(["minute", "hour", "day", "month"] as const).map((unit) => (
               <button
                 key={unit}
@@ -283,6 +378,99 @@ export default function SettingsPanel() {
         </p>
       </div>
 
+      <div className="rounded-[32px] border border-border-subtle bg-bg-secondary/70 p-6 shadow-soft">
+        <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
+          Reset local PIN/password
+        </div>
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
+          Use your security question to replace the local app-lock secret without reinstalling.
+        </p>
+        <div className="mt-4 rounded-2xl bg-bg-primary/70 p-3 text-sm font-semibold text-text-primary">
+          {recoveryQuestion ?? "Security recovery is not configured yet."}
+        </div>
+        <div className="mt-4 grid gap-3">
+          <input
+            value={recoveryAnswer}
+            onChange={(event) => setRecoveryAnswer(event.target.value)}
+            className="min-w-0 rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm outline-none transition focus:border-border-hover"
+            placeholder="Security answer"
+          />
+          <input
+            value={newLocalSecret}
+            onChange={(event) => setNewLocalSecret(event.target.value)}
+            className="min-w-0 rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm outline-none transition focus:border-border-hover"
+            placeholder="New PIN or password"
+            type="password"
+          />
+          <button
+            onClick={() => void resetLocalSecret()}
+            disabled={!recoveryQuestion}
+            className="rounded-full bg-text-primary px-4 py-2 text-sm font-semibold text-bg-primary transition hover:bg-accent-study disabled:cursor-not-allowed disabled:opacity-50 active:scale-95"
+          >
+            Reset local secret
+          </button>
+        </div>
+        {recoveryMessage && (
+          <p className="mt-3 text-xs leading-5 text-text-muted">{recoveryMessage}</p>
+        )}
+      </div>
+
+      <div className="rounded-[32px] border border-border-subtle bg-bg-secondary/70 p-6 shadow-soft">
+        <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
+          Security question
+        </div>
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
+          Choose the recovery question used when resetting your local PIN/password.
+        </p>
+        <div className="mt-4 grid gap-3">
+        <select
+          value={securityQuestion}
+          onChange={(event) => {
+            const value = event.target.value;
+            setSecurityQuestion(value);
+            if (value !== "Custom question") setCustomSecurityQuestion("");
+          }}
+          className="w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm text-text-primary outline-none transition focus:border-border-hover"
+        >
+          <option value="" disabled>
+            Choose a security question
+          </option>
+          {SECURITY_QUESTIONS.map((question) => (
+            <option key={question} value={question}>
+              {question}
+            </option>
+          ))}
+        </select>
+        {securityQuestion === "Custom question" && (
+          <input
+            value={customSecurityQuestion}
+            onChange={(event) => setCustomSecurityQuestion(event.target.value)}
+            className="w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm outline-none transition focus:border-border-hover"
+            placeholder="Write your custom security question"
+          />
+        )}
+        <input
+          value={newSecurityAnswer}
+          onChange={(event) => setNewSecurityAnswer(event.target.value)}
+          className="w-full rounded-2xl border border-border-subtle bg-bg-primary/80 px-4 py-3 text-sm outline-none transition focus:border-border-hover"
+          placeholder="New security answer"
+        />
+        </div>
+        <button
+          onClick={() => void updateSecurityQuestion()}
+          className="mt-3 w-full rounded-full bg-text-primary px-4 py-2 text-sm font-semibold text-bg-primary transition hover:bg-accent-study active:scale-95"
+        >
+          Save security question
+        </button>
+        {securityQuestionMessage && (
+          <p className="mt-3 text-xs leading-5 text-text-muted">{securityQuestionMessage}</p>
+        )}
+      </div>
+      </>
+      )}
+
+      {!fullPage && (
+      <>
       <div className="mt-5 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
         <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
           Windows setup
@@ -352,6 +540,9 @@ export default function SettingsPanel() {
         </div>
         {clearMessage && <p className="mt-3 text-xs text-text-muted">{clearMessage}</p>}
       </div>
+      </>
+      )}
+      </div>
     </section>
   );
 }
@@ -381,18 +572,31 @@ function RuleRow({
   label,
   value,
   active,
+  onClick,
 }: {
   label: string;
   value: string;
   active?: boolean;
+  onClick?: () => void;
 }) {
-  return (
-    <div className="rule-row">
+  const className = `rule-row ${onClick ? "w-full text-left transition hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99]" : ""}`;
+  const content = (
+    <>
       <span>
         <strong>{label}</strong>
         <small>{value}</small>
       </span>
       <span className={active ? "toggle-dot active" : "toggle-dot"} />
-    </div>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button className={className} onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className={className}>{content}</div>
   );
 }

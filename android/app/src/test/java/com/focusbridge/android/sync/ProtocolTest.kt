@@ -9,6 +9,24 @@ import kotlinx.serialization.json.put
 
 class ProtocolTest {
     @Test
+    fun authIncludesStablePhoneInstallId() {
+        val envelope = Protocol.decodeEnvelope(
+            Protocol.auth(
+                pairingKey = "pairing-key",
+                deviceId = "qr-session-id",
+                deviceName = "Pixel 8",
+                phoneInstallId = "phone-install-id",
+            ),
+        )
+
+        assertEquals(MessageType.AUTH, envelope.type)
+        val encoded = Protocol.json.encodeToString(Envelope.serializer(), envelope)
+        assertTrue(encoded.contains("\"deviceId\":\"qr-session-id\""))
+        assertTrue(encoded.contains("\"phoneInstallId\":\"phone-install-id\""))
+        assertTrue(encoded.contains("\"deviceName\":\"Pixel 8\""))
+    }
+
+    @Test
     fun appInventoryUsesProtocolEnvelope() {
         val encoded = Protocol.appInventory(
             listOf(
@@ -116,5 +134,20 @@ class ProtocolTest {
         assertEquals("notification-1", ack.id)
         assertTrue(ack.accepted)
         assertEquals(1234L, ack.serverTime)
+    }
+
+    @Test
+    fun decodesDesktopReconnectActionPayload() {
+        val action = Protocol.decodeDesktopAction(
+            buildJsonObject {
+                put("action", "reconnect_request")
+                put("deviceId", "phone-1")
+                put("requestedAt", 99L)
+            },
+        )
+
+        assertEquals("reconnect_request", action.action)
+        assertEquals("phone-1", action.deviceId)
+        assertEquals(99L, action.requestedAt)
     }
 }

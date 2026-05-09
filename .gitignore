@@ -25,6 +25,7 @@ android/.cxx/
 
 # Tauri
 desktop/src-tauri/target/
+desktop/src-tauri/target-codex/
 desktop/src-tauri/gen/
 
 # OS

@@ -9,6 +9,7 @@ import PairingQR from "./components/PairingQR";
 import SettingsPanel from "./components/SettingsPanel";
 import AuthGate from "./components/AuthGate";
 import AppRulesPanel from "./components/AppRulesPanel";
+import PreviousConnections from "./components/PreviousConnections";
 import logo from "./assets/logo.png";
 import { useConnection } from "./hooks/useConnection";
 import { useConnectionStore } from "./stores/connectionStore";
@@ -17,6 +18,7 @@ import { useNotificationStore } from "./stores/notificationStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import type { AppRule, ConnectionState, Notification } from "./types";
 import { desktopConnectionStateFromDiagnostics } from "./utils/connectionHealth";
+import { SETTINGS_NAV_ITEM } from "./utils/navigation";
 
 interface NativeNotificationRow {
   id: string;
@@ -69,6 +71,7 @@ export default function App() {
   const [closePromptOpen, setClosePromptOpen] = useState(false);
   const { state } = useConnection();
   const activeFilter = useSettingsStore((s) => s.activeFilter);
+  const setFilter = useSettingsStore((s) => s.setFilter);
   const setConnectionState = useConnectionStore((s) => s.setState);
   const upsert = useNotificationStore((s) => s.upsert);
   const remove = useNotificationStore((s) => s.remove);
@@ -165,8 +168,10 @@ export default function App() {
     STUDY: "Study-safe feed",
     TWOFA: "Security codes",
     APP_CONTROL: "Phone app control",
+    SETTINGS: "Settings",
   }[activeFilter];
   const showingAppControl = activeFilter === "APP_CONTROL";
+  const showingSettings = activeFilter === "SETTINGS";
 
   return (
     <AuthGate>
@@ -194,6 +199,25 @@ export default function App() {
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             <FilterPanel />
           </div>
+          <button
+            onClick={() => setFilter("SETTINGS")}
+            className={
+              "mt-4 shrink-0 rounded-2xl px-3 py-3 text-left text-sm transition-all " +
+              (activeFilter === "SETTINGS"
+                ? "bg-text-primary text-bg-primary shadow-soft"
+                : "bg-bg-secondary/70 text-text-secondary hover:bg-bg-secondary hover:text-text-primary")
+            }
+          >
+            <span className="block font-semibold">{SETTINGS_NAV_ITEM.label}</span>
+            <span
+              className={
+                "mt-0.5 block text-xs " +
+                (activeFilter === "SETTINGS" ? "text-bg-secondary" : "text-text-muted")
+              }
+            >
+              {SETTINGS_NAV_ITEM.hint}
+            </span>
+          </button>
           <div className="mt-4 shrink-0 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
             <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
               Device status
@@ -207,7 +231,7 @@ export default function App() {
           </div>
         </aside>
 
-        <main className="ml-4 grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_340px] gap-4">
+        <main className="ml-4 grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)_380px] gap-4">
           <section className="glass-panel flex min-w-0 flex-col overflow-hidden rounded-[32px]">
             <header className="border-b border-border-subtle px-6 py-5">
               <div className="flex flex-wrap items-center justify-between gap-4">
@@ -231,13 +255,29 @@ export default function App() {
               </div>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-              {showingAppControl ? <AppRulesPanel fullPage /> : <NotificationList />}
+              {showingSettings ? (
+                <SettingsPanel fullPage />
+              ) : showingAppControl ? (
+                <AppRulesPanel fullPage />
+              ) : (
+                <NotificationList />
+              )}
             </div>
           </section>
 
-          <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto">
-            {showPairing ? <PairingQR /> : <SettingsPanel />}
-            {!showPairing && <PairingQR compact />}
+          <aside className="flex h-full max-h-full min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pb-4 pr-2">
+            {showPairing ? (
+              <>
+                <PairingQR />
+                <PreviousConnections />
+              </>
+            ) : (
+              <>
+                <SettingsPanel />
+                <PairingQR compact />
+                <PreviousConnections />
+              </>
+            )}
           </aside>
         </main>
       </div>

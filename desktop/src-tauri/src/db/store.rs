@@ -332,6 +332,21 @@ pub fn save_pairing(
     Ok(())
 }
 
+pub fn saved_pairing_key_for_device(
+    db_path: &Path,
+    device_id: &str,
+    presented_pairing_key: &str,
+) -> Result<Option<String>> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.query_row(
+        "SELECT pairing_key FROM paired_devices WHERE device_id = ?1 AND pairing_key = ?2 LIMIT 1",
+        params![device_id, presented_pairing_key],
+        |row| row.get(0),
+    )
+    .optional()
+    .context("lookup saved pairing key")
+}
+
 pub fn mark_pairing_connected(
     db_path: &Path,
     device_name: &str,
@@ -344,6 +359,14 @@ pub fn mark_pairing_connected(
     let now = now_millis();
     conn.execute("UPDATE paired_devices SET is_active = 0", [])
         .context("deactivate previous pairings")?;
+    conn.execute(
+        "DELETE FROM paired_devices
+         WHERE device_id != ?1
+           AND endpoint = ?2
+           AND LOWER(device_name) = LOWER(?3)",
+        params![device_id, endpoint, device_name],
+    )
+    .context("dedupe legacy paired device rows")?;
     conn.execute(
         "INSERT INTO paired_devices (
             device_name, device_id, pairing_key, mode, endpoint, cert_fingerprint, is_active, created_at, last_connected_at

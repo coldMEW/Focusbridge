@@ -45,6 +45,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -52,6 +53,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Block
@@ -101,6 +103,7 @@ import com.focusbridge.android.data.repository.ConfigRepository
 import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.data.repository.PairingRepository
 import com.focusbridge.android.pairing.PairingManager
+import com.focusbridge.android.security.MobileAppLockCrypto
 import com.focusbridge.android.service.SyncForegroundService
 import com.focusbridge.android.sync.ConnectionState
 import com.focusbridge.android.sync.WebSocketClient
@@ -136,6 +139,7 @@ class MainActivity : ComponentActivity() {
                     pairingManager = pairingManager,
                     configRepository = configRepository,
                     connectionState = webSocketClient.state.collectAsState().value,
+                    reconnectRequest = webSocketClient.reconnectRequest.collectAsState().value,
                     openNotificationAccess = {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     },
@@ -147,6 +151,19 @@ class MainActivity : ComponentActivity() {
                             this,
                             Intent(this, SyncForegroundService::class.java),
                         )
+                    },
+                    acceptReconnect = {
+                        webSocketClient.acceptReconnectRequest()
+                        ContextCompat.startForegroundService(
+                            this,
+                            Intent(this, SyncForegroundService::class.java),
+                        )
+                    },
+                    dismissReconnect = {
+                        webSocketClient.dismissReconnectRequest()
+                    },
+                    manualDisconnect = {
+                        webSocketClient.manualDisconnect()
                     },
                 )
             }
@@ -175,6 +192,10 @@ class MainActivity : ComponentActivity() {
                 }
         }
     }
+
+    companion object {
+        const val EXTRA_SHOW_RECONNECT_PROMPT = "focusbridge.show_reconnect_prompt"
+    }
 }
 
 private enum class AppTab(val label: String) {
@@ -184,6 +205,15 @@ private enum class AppTab(val label: String) {
     Log("Log"),
 }
 
+private val MOBILE_SECURITY_QUESTIONS = listOf(
+    "What city were you born in?",
+    "What was the name of your first school?",
+    "What was your childhood nickname?",
+    "What is the name of your favorite teacher?",
+    "What was the model of your first phone?",
+    "Custom question",
+)
+
 @Composable
 private fun FocusBridgeScreen(
     notifications: NotificationRepository,
@@ -191,9 +221,13 @@ private fun FocusBridgeScreen(
     pairingManager: PairingManager,
     configRepository: ConfigRepository,
     connectionState: ConnectionState,
+    reconnectRequest: com.focusbridge.android.sync.DesktopReconnectRequest?,
     openNotificationAccess: () -> Unit,
     openBatterySettings: () -> Unit,
     startSync: () -> Unit,
+    acceptReconnect: () -> Unit,
+    dismissReconnect: () -> Unit,
+    manualDisconnect: () -> Unit,
 ) {
     val context = LocalContext.current
     val items by notifications.observeRecent().collectAsState(initial = emptyList())
@@ -209,6 +243,13 @@ private fun FocusBridgeScreen(
     val priorityKeywords by configRepository.observe("priority_keywords").collectAsState(initial = "")
     val favoriteContacts by configRepository.observe("favorite_contacts").collectAsState(initial = "")
     val blockedKeywords by configRepository.observe("blocked_keywords").collectAsState(initial = "")
+    val appLockEnabled by configRepository.observe("mobile_lock_enabled").map { it == "true" }.collectAsState(initial = false)
+    val appLockSalt by configRepository.observe("mobile_lock_salt").collectAsState(initial = "")
+    val appLockHash by configRepository.observe("mobile_lock_hash").collectAsState(initial = "")
+    val recoveryQuestion by configRepository.observe("mobile_lock_recovery_question").collectAsState(initial = "")
+    val recoverySalt by configRepository.observe("mobile_lock_recovery_salt").collectAsState(initial = "")
+    val recoveryHash by configRepository.observe("mobile_lock_recovery_hash").collectAsState(initial = "")
+    var appUnlocked by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(AppTab.Home) }
     val scope = rememberCoroutineScope()
     val notificationPermission = rememberLauncherForActivityResult(
@@ -239,6 +280,65 @@ private fun FocusBridgeScreen(
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         startSync()
+    }
+
+    LaunchedEffect(appLockEnabled) {
+        if (!appLockEnabled) appUnlocked = false
+    }
+
+    if (reconnectRequest != null) {
+        AlertDialog(
+            onDismissRequest = dismissReconnect,
+            title = { Text("Reconnect to desktop?") },
+            text = {
+                Text(
+                    "Your desktop is asking this phone to resume FocusBridge sync. Accept only if you recognize this desktop.",
+                    color = Color(0xFF61706A),
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = acceptReconnect,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF17221E)),
+                ) {
+                    Text("Accept and sync")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = dismissReconnect) {
+                    Text("Not now")
+                }
+            },
+        )
+    }
+
+    if (appLockEnabled && !appUnlocked && !appLockHash.isNullOrBlank()) {
+        MobileAppLockGate(
+            appLockSalt = appLockSalt,
+            appLockHash = appLockHash,
+            recoveryQuestion = recoveryQuestion,
+            recoveryHash = recoveryHash,
+            onUnlock = { appUnlocked = true },
+            onResetSecret = { newSecret, answer, onResult ->
+                scope.launch {
+                    val validAnswer = MobileAppLockCrypto.verify(answer.lowercase(), recoverySalt, recoveryHash)
+                    if (!validAnswer) {
+                        onResult("Security answer did not match.")
+                        return@launch
+                    }
+                    if (!MobileAppLockCrypto.validSecret(newSecret)) {
+                        onResult("Use a 4+ digit PIN or 8+ character password.")
+                        return@launch
+                    }
+                    val salt = MobileAppLockCrypto.newSalt()
+                    configRepository.set("mobile_lock_salt", salt)
+                    configRepository.set("mobile_lock_hash", MobileAppLockCrypto.hashSecret(newSecret, salt))
+                    appUnlocked = true
+                    onResult("Local app lock reset.")
+                }
+            },
+        )
+        return
     }
 
     Surface(
@@ -281,6 +381,7 @@ private fun FocusBridgeScreen(
                             openNotificationAccess = openNotificationAccess,
                             openBatterySettings = openBatterySettings,
                             startSync = startSync,
+                            manualDisconnect = manualDisconnect,
                         )
                         AppTab.Pair -> PairTab(pairingManager = pairingManager, startSync = startSync, compact = compact)
                         AppTab.Rules -> RulesTab(
@@ -303,6 +404,34 @@ private fun FocusBridgeScreen(
                             },
                             onBlockedKeywordsChange = { value ->
                                 scope.launch { configRepository.set("blocked_keywords", value) }
+                            },
+                            appLockEnabled = appLockEnabled,
+                            recoveryQuestion = recoveryQuestion.orEmpty(),
+                            onAppLockSave = { enabled, secret, question, answer, onResult ->
+                                scope.launch {
+                                    if (!enabled) {
+                                        configRepository.set("mobile_lock_enabled", "false")
+                                        onResult("Mobile app lock disabled.")
+                                        return@launch
+                                    }
+                                    if (!MobileAppLockCrypto.validSecret(secret)) {
+                                        onResult("Use a 4+ digit PIN or 8+ character password.")
+                                        return@launch
+                                    }
+                                    if (question.isBlank() || answer.isBlank()) {
+                                        onResult("Choose a security question and answer.")
+                                        return@launch
+                                    }
+                                    val secretSalt = MobileAppLockCrypto.newSalt()
+                                    val answerSalt = MobileAppLockCrypto.newSalt()
+                                    configRepository.set("mobile_lock_salt", secretSalt)
+                                    configRepository.set("mobile_lock_hash", MobileAppLockCrypto.hashSecret(secret, secretSalt))
+                                    configRepository.set("mobile_lock_recovery_question", question.trim())
+                                    configRepository.set("mobile_lock_recovery_salt", answerSalt)
+                                    configRepository.set("mobile_lock_recovery_hash", MobileAppLockCrypto.hashSecret(answer.lowercase(), answerSalt))
+                                    configRepository.set("mobile_lock_enabled", "true")
+                                    onResult("Mobile app lock enabled.")
+                                }
                             },
                         )
                         AppTab.Log -> NotificationLog(
@@ -462,6 +591,7 @@ private fun HomeTab(
     openNotificationAccess: () -> Unit,
     openBatterySettings: () -> Unit,
     startSync: () -> Unit,
+    manualDisconnect: () -> Unit,
 ) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -510,9 +640,10 @@ private fun HomeTab(
                 },
                 body = activePairing?.endpoint ?: "Open desktop FocusBridge, show Pairing, then scan the QR code.",
                 primary = if (connectionState == ConnectionState.CONNECTED) "Connected" else "Retry sync",
-                secondary = "Notification access",
+                secondary = if (connectionState == ConnectionState.CONNECTED) "Disconnect" else "Notification access",
                 onPrimary = startSync,
-                onSecondary = openNotificationAccess,
+                onSecondary = if (connectionState == ConnectionState.CONNECTED) manualDisconnect else openNotificationAccess,
+                secondaryDestructive = connectionState == ConnectionState.CONNECTED,
             )
         }
         item {
@@ -845,6 +976,88 @@ private fun decodeQr(imageProxy: ImageProxy): String? {
 }
 
 @Composable
+private fun MobileAppLockGate(
+    appLockSalt: String?,
+    appLockHash: String?,
+    recoveryQuestion: String?,
+    recoveryHash: String?,
+    onUnlock: () -> Unit,
+    onResetSecret: (String, String, (String) -> Unit) -> Unit,
+) {
+    var secret by remember { mutableStateOf("") }
+    var answer by remember { mutableStateOf("") }
+    var newSecret by remember { mutableStateOf("") }
+    var resetOpen by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF5EFE4)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Brush.verticalGradient(listOf(Color(0xFFF9F2E7), Color(0xFFE1ECE3))))
+                .padding(18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            PanelCard(Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Security, contentDescription = null, tint = Color(0xFF3F7F70), modifier = Modifier.size(42.dp))
+                Text("Unlock FocusBridge", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                Text("Enter your local PIN or password. This stays on this phone.", color = Color(0xFF61706A))
+                OutlinedTextField(
+                    value = secret,
+                    onValueChange = { secret = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("PIN or password") },
+                )
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        if (MobileAppLockCrypto.verify(secret, appLockSalt, appLockHash)) {
+                            secret = ""
+                            onUnlock()
+                        } else {
+                            message = "Incorrect PIN/password."
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF17221E)),
+                ) {
+                    Text("Unlock")
+                }
+                TextButton(onClick = { resetOpen = !resetOpen }) {
+                    Text("Forgot PIN/password?")
+                }
+                if (resetOpen) {
+                    Text(recoveryQuestion ?: "Security question is not configured.", fontWeight = FontWeight.Bold, color = Color(0xFF17221E))
+                    OutlinedTextField(
+                        value = answer,
+                        onValueChange = { answer = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Security answer") },
+                    )
+                    OutlinedTextField(
+                        value = newSecret,
+                        onValueChange = { newSecret = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("New PIN or password") },
+                    )
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !recoveryQuestion.isNullOrBlank() && !recoveryHash.isNullOrBlank(),
+                        onClick = { onResetSecret(newSecret, answer) { result -> message = result } },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3F7F70)),
+                    ) {
+                        Text("Reset and unlock")
+                    }
+                }
+                message?.let { Text(it, color = Color(0xFF8F3324)) }
+            }
+        }
+    }
+}
+
+@Composable
 private fun RulesTab(
     studyMode: Boolean,
     privacyMode: Boolean,
@@ -856,7 +1069,21 @@ private fun RulesTab(
     onPriorityKeywordsChange: (String) -> Unit,
     onFavoriteContactsChange: (String) -> Unit,
     onBlockedKeywordsChange: (String) -> Unit,
+    appLockEnabled: Boolean,
+    recoveryQuestion: String,
+    onAppLockSave: (Boolean, String, String, String, (String) -> Unit) -> Unit,
 ) {
+    var lockEnabled by remember(appLockEnabled) { mutableStateOf(appLockEnabled) }
+    var lockSecret by remember { mutableStateOf("") }
+    var lockQuestion by remember(recoveryQuestion) {
+        mutableStateOf(if (recoveryQuestion.isBlank() || recoveryQuestion in MOBILE_SECURITY_QUESTIONS) recoveryQuestion else "Custom question")
+    }
+    var customLockQuestion by remember(recoveryQuestion) {
+        mutableStateOf(if (recoveryQuestion !in MOBILE_SECURITY_QUESTIONS) recoveryQuestion else "")
+    }
+    var lockAnswer by remember { mutableStateOf("") }
+    var lockMessage by remember { mutableStateOf<String?>(null) }
+
     LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             RuleCard(
@@ -901,6 +1128,79 @@ private fun RulesTab(
         }
         item {
             RuleCard("Local-first sync", "Notification data stays on your devices for the MVP.", true) {}
+        }
+        item {
+            PanelCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Mobile app lock", fontWeight = FontWeight.Black, color = Color(0xFF17221E))
+                        Text("Optional local PIN/password gate for this phone.", color = Color(0xFF61706A))
+                    }
+                    Switch(checked = lockEnabled, onCheckedChange = { lockEnabled = it })
+                }
+                if (lockEnabled) {
+                    OutlinedTextField(
+                        value = lockSecret,
+                        onValueChange = { lockSecret = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("PIN or password") },
+                    )
+                    Text("Use a 4+ digit PIN or 8+ character password.", color = Color(0xFF61706A), style = MaterialTheme.typography.bodySmall)
+                    Text("Security question", fontWeight = FontWeight.Bold, color = Color(0xFF17221E))
+                    MOBILE_SECURITY_QUESTIONS.forEach { question ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable { lockQuestion = question }
+                                .background(if (lockQuestion == question) Color(0x223F7F70) else Color.Transparent)
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                if (lockQuestion == question) Icons.Filled.CheckCircle else Icons.Filled.Security,
+                                contentDescription = null,
+                                tint = if (lockQuestion == question) Color(0xFF24B86F) else Color(0xFF61706A),
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(question, color = Color(0xFF17221E))
+                        }
+                    }
+                    if (lockQuestion == "Custom question") {
+                        OutlinedTextField(
+                            value = customLockQuestion,
+                            onValueChange = { customLockQuestion = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Custom security question") },
+                        )
+                    }
+                    OutlinedTextField(
+                        value = lockAnswer,
+                        onValueChange = { lockAnswer = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Security answer") },
+                    )
+                }
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        val selectedQuestion = if (lockQuestion == "Custom question") customLockQuestion else lockQuestion
+                        onAppLockSave(lockEnabled, lockSecret, selectedQuestion, lockAnswer) { result -> lockMessage = result }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = if (lockEnabled) Color(0xFF17221E) else Color(0xFF8F3324)),
+                ) {
+                    Text(if (lockEnabled) "Save app lock" else "Turn off app lock")
+                }
+                lockMessage?.let { Text(it, color = Color(0xFF61706A)) }
+            }
         }
     }
 }
@@ -1057,6 +1357,7 @@ private fun ActionCard(
     secondary: String,
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
+    secondaryDestructive: Boolean = false,
 ) {
     PanelCard {
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
@@ -1074,9 +1375,14 @@ private fun ActionCard(
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onSecondary,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3F7F70)),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (secondaryDestructive) Color(0xFF8F3324) else Color(0xFF3F7F70),
+                ),
             ) {
-                Icon(Icons.Filled.NotificationsActive, contentDescription = null)
+                Icon(
+                    if (secondaryDestructive) Icons.Filled.Block else Icons.Filled.NotificationsActive,
+                    contentDescription = null,
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(secondary)
             }

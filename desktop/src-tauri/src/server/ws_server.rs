@@ -97,7 +97,7 @@ where
     loop {
         let msg = tokio::select! {
             _ = stale_check.tick() => {
-                if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 120_000 {
+                if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 180_000 {
                     state.mark_stale_connection("phone heartbeat timeout");
                     app.emit("focusbridge://connection", "DISCONNECTED")?;
                     if notified_connected {
@@ -136,14 +136,11 @@ where
         last_phone_seen_at = now_ms() as i64;
         let mut envelope: Envelope =
             serde_json::from_str(&text).context("parse focusbridge envelope")?;
-        let current_pairing_key = state
-            .current_pairing()
-            .map(|p| p.pairing_key)
-            .unwrap_or_default();
-        let expected_key = active_pairing_key
-            .as_deref()
-            .unwrap_or(current_pairing_key.as_str())
-            .to_string();
+        let expected_key = if let Some(key) = active_pairing_key.as_deref() {
+            key.to_string()
+        } else {
+            expected_pairing_key_for_envelope(&state, &envelope).unwrap_or_default()
+        };
         if envelope.r#type == MessageType::Encrypted {
             let decrypted = decrypt_payload(&expected_key, &envelope.payload)?;
             envelope =
@@ -156,11 +153,17 @@ where
                 active_pairing_key = Some(expected_key.clone());
                 last_phone_seen_at = now_ms() as i64;
                 state.set_phone_sender(outbound_tx.clone());
-                let device_id = envelope
+                let qr_device_id = envelope
                     .payload
                     .get("deviceId")
                     .and_then(|value| value.as_str())
                     .unwrap_or("android-phone");
+                let device_id = envelope
+                    .payload
+                    .get("phoneInstallId")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(qr_device_id);
                 let device_name = envelope
                     .payload
                     .get("deviceName")
@@ -181,7 +184,7 @@ where
                 )?;
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
                     format!(
-                        r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":15000,"heartbeatTimeout":120000,"maxMessageSize":1048576}}}}}}"#,
+                        r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":15000,"heartbeatTimeout":180000,"maxMessageSize":1048576}}}}}}"#,
                         now_ms()
                     ),
                 ))
@@ -296,6 +299,43 @@ fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+fn expected_pairing_key_for_envelope(state: &AppState, envelope: &Envelope) -> Option<String> {
+    if envelope.r#type != MessageType::Auth {
+        return state.current_pairing().map(|session| session.pairing_key);
+    }
+
+    let presented_key = envelope
+        .payload
+        .get("pairingKey")
+        .and_then(|value| value.as_str())?;
+    let qr_device_id = envelope
+        .payload
+        .get("deviceId")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let stable_device_id = envelope
+        .payload
+        .get("phoneInstallId")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(qr_device_id);
+
+    if let Some(session) = state.current_pairing() {
+        if session.pairing_key == presented_key && session.device_id == qr_device_id {
+            return Some(session.pairing_key);
+        }
+    }
+
+    store::saved_pairing_key_for_device(&state.db_path, stable_device_id, presented_key)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            store::saved_pairing_key_for_device(&state.db_path, qr_device_id, presented_key)
+                .ok()
+                .flatten()
+        })
 }
 
 async fn send_notification_ack<S>(

@@ -4,6 +4,7 @@ import com.focusbridge.android.data.local.NotificationEntity
 import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.data.repository.PairingRepository
 import com.focusbridge.android.data.repository.ConfigRepository
+import com.focusbridge.android.pairing.DeviceInfo
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -44,7 +45,12 @@ class SyncEngine @Inject constructor(
             if (isManuallyDisconnected()) return@withLock
             val pairing = pairings.active() ?: return@withLock
             for (endpoint in pairing.candidateEndpoints()) {
-                client.connect(pairing, endpointOverride = endpoint, retryingOnFailure = true)
+                client.connect(
+                    pairing,
+                    deviceName = DeviceInfo.deviceName,
+                    endpointOverride = endpoint,
+                    retryingOnFailure = true,
+                )
                 val connected = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
                     client.state.first { it == ConnectionState.CONNECTED }
                 } != null

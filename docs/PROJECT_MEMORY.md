@@ -1,6 +1,6 @@
 # FocusBridge Project Memory
 
-Last updated: 2026-05-08
+Last updated: 2026-05-09
 
 ## Product
 
@@ -15,7 +15,14 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 ## Most Recent Work
 
-- Current production patch hardens LAN sync against Android background jitter: desktop heartbeat tolerance is now 120 seconds, Android sends 15-second app pings and waits 120 seconds before declaring heartbeat timeout, and `AUTH_OK` advertises the longer heartbeat config.
+- Current connection fix adds a persistent Android `phoneInstallId` sent in `AUTH`. Desktop now stores previous phones by that stable install identity instead of the temporary QR session ID, validates saved pairing keys for reconnects, and still falls back to old QR-device rows so existing paired devices can migrate forward after their next successful connection.
+- Desktop previous-device storage now dedupes legacy rows when the same phone name/endpoint reconnects under the stable identity. Reconnect reliability also gets a longer 180-second heartbeat timeout on both desktop and Android to reduce false disconnects from Android background scheduling jitter.
+- Desktop Focus Rules `Study Mode` is now a real clickable toggle that persists through the same `set_study_mode` command used elsewhere. Manual disconnect is visible on desktop diagnostics only while connected, sends `UNPAIR`, clears the active sender, and marks diagnostics disconnected.
+- Android Home now exposes a visible `Disconnect` action only while connected. It persists `manual_disconnect=true`, sends a disconnect envelope when possible, and closes the socket so the foreground reconnect supervisor will not immediately reconnect until the user accepts/retries.
+- Android now has optional mobile app lock support, default off. Rules includes a Mobile app lock card with PIN/password setup, preset/custom security questions, local PBKDF2-HMAC-SHA256 secret/answer hashing, unlock gate, and security-question reset flow.
+- Battery unrestricted status continues to use the existing checklist row behavior: when Android reports unrestricted, it shows the green check/done state instead of the warning icon.
+- Production artifacts were rebuilt and copied to `FocusBridge-v1.0.0-latest-release`: `FocusBridge_1.0.0_x64_en-US.msi`, `FocusBridge-Android-1.0.0-release.apk`, and `app-release.apk`.
+- Current production patch hardens LAN sync against Android background jitter: desktop heartbeat tolerance is now 180 seconds, Android sends 15-second app pings and waits 180 seconds before declaring heartbeat timeout, and `AUTH_OK` advertises the longer heartbeat config.
 - Desktop now has a real manual `Disconnect phone` command in diagnostics. It sends an encrypted `UNPAIR` envelope to the active phone, marks diagnostics as manual disconnect, and Android persists a `manual_disconnect` flag so the foreground reconnect supervisor does not immediately reconnect until the user pairs again.
 - Desktop now records paired devices on successful WebSocket auth, including phone name, endpoint, and last connected timestamp. The pairing screen shows a previous-connections section with green/red status dots and reconnect guidance.
 - Pairing QR/manual payload layout was tightened for narrow right panels: the panel is `min-width: 0`, QR image is constrained to the card, and the manual payload uses internal scrolling plus aggressive wrapping so it stays inside the pairing section on different monitor sizes.

@@ -192,3 +192,26 @@ pub fn disconnect_phone(
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[tauri::command]
+pub fn request_device_reconnect(
+    device_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let message = serde_json::to_string(&json!({
+        "version": 1,
+        "type": "DESKTOP_ACTION",
+        "payload": {
+            "action": "reconnect_request",
+            "deviceId": device_id,
+            "requestedAt": now_millis()
+        }
+    }))
+    .map_err(|e| e.to_string())?;
+
+    if state.send_to_phone(message) {
+        Ok(())
+    } else {
+        Err("Phone is offline. Open FocusBridge on Android, then scan the QR or paste the manual payload.".into())
+    }
+}

@@ -42,7 +42,13 @@ export interface Settings {
   lockTimeoutMinutes: number;
 }
 
-export type FilterKind = "ALL" | "IMPORTANT" | "STUDY" | "TWOFA" | "APP_CONTROL";
+export type FilterKind =
+  | "ALL"
+  | "IMPORTANT"
+  | "STUDY"
+  | "TWOFA"
+  | "APP_CONTROL"
+  | "SETTINGS";
 
 export interface AppRule {
   packageName: string;

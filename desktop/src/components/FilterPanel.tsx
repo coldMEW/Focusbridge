@@ -1,13 +1,6 @@
 import { useSettingsStore } from "../stores/settingsStore";
 import type { FilterKind } from "../types";
-
-const ITEMS: { key: FilterKind; label: string; hint: string }[] = [
-  { key: "ALL", label: "Inbox", hint: "Everything not dismissed" },
-  { key: "IMPORTANT", label: "Priority", hint: "Pinned and urgent" },
-  { key: "STUDY", label: "Study lane", hint: "Low-interruption mode" },
-  { key: "TWOFA", label: "Security", hint: "Codes and sign-ins" },
-  { key: "APP_CONTROL", label: "App Control", hint: "Words, apps, and toggles" },
-];
+import { MAIN_NAV_ITEMS } from "../utils/navigation";
 
 export default function FilterPanel() {
   const active = useSettingsStore((s) => s.activeFilter);
@@ -22,7 +15,7 @@ export default function FilterPanel() {
   return (
     <nav className="text-sm">
       <ul className="space-y-2">
-        {ITEMS.map((it) => (
+        {MAIN_NAV_ITEMS.map((it) => (
           <li key={it.key}>
             <button
               onClick={() => selectFilter(it.key)}

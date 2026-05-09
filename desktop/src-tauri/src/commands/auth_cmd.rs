@@ -85,6 +85,16 @@ pub fn auth_reset_password_with_recovery(
     set_password(&state, &new_password)
 }
 
+#[tauri::command]
+pub fn auth_update_recovery(
+    security_question: String,
+    security_answer: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    validate_recovery(&security_question, &security_answer)?;
+    set_recovery(&state, &security_question, &security_answer)
+}
+
 fn set_password(state: &AppState, password: &str) -> Result<(), String> {
     let mut salt = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut salt);
