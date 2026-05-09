@@ -21,3 +21,21 @@ pub fn show_phone_notification<R: Runtime>(app: &AppHandle<R>, row: &Notificatio
         warn!(%error, "failed to show desktop notification");
     }
 }
+
+pub fn show_connection_notification<R: Runtime>(app: &AppHandle<R>, connected: bool) {
+    let (title, body) = if connected {
+        (
+            "FocusBridge connected",
+            "Your phone is now syncing notifications.",
+        )
+    } else {
+        (
+            "FocusBridge disconnected",
+            "Phone sync stopped. Reopen FocusBridge on Android or check Wi-Fi.",
+        )
+    };
+
+    if let Err(error) = app.notification().builder().title(title).body(body).show() {
+        warn!(%error, "failed to show connection notification");
+    }
+}

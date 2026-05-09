@@ -20,6 +20,9 @@ interface NotificationDao {
     @Query("UPDATE notifications SET status = :status WHERE id = :id")
     suspend fun setStatus(id: String, status: String)
 
+    @Query("UPDATE notifications SET status = :status WHERE batchId = :batchId")
+    suspend fun setStatusByBatch(batchId: String, status: String)
+
     @Query("DELETE FROM notifications WHERE min(timestamp, receivedAt) < :cutoffMs")
     suspend fun deleteOlderThan(cutoffMs: Long): Int
 

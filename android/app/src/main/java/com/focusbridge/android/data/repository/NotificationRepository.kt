@@ -16,6 +16,8 @@ class NotificationRepository @Inject constructor(
 
     suspend fun markSent(id: String) = dao.setStatus(id, "SENT")
 
+    suspend fun markBatchSent(batchId: String) = dao.setStatusByBatch(batchId, "SENT")
+
     suspend fun pending(): List<NotificationEntity> = dao.pending()
 
     suspend fun clearOlderThan(cutoffMs: Long): Int = dao.deleteOlderThan(cutoffMs)

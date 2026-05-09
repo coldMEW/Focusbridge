@@ -47,8 +47,9 @@ class WebSocketClient @Inject constructor(
         pairing: PairingEntity,
         deviceName: String = "Android phone",
         endpointOverride: String? = null,
+        retryingOnFailure: Boolean = false,
     ) {
-        disconnect()
+        disconnect(showDisconnected = !retryingOnFailure)
         val serial = ++connectionSerial
         activePairingKey = pairing.pairingKey
         secureReady = false
@@ -85,7 +86,10 @@ class WebSocketClient @Inject constructor(
                             startHeartbeat(webSocket, pairing.pairingKey, serial)
                             webSocket.sendSecure(pairing.pairingKey, Protocol.appInventory(appInventoryProvider.launchableApps()))
                         }
-                        MessageType.AUTH_FAILED -> updateState(serial, ConnectionState.DISCONNECTED)
+                        MessageType.AUTH_FAILED -> updateState(
+                            serial,
+                            if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+                        )
                         MessageType.PONG -> {
                             lastPongAt = System.currentTimeMillis()
                         }
@@ -97,12 +101,18 @@ class WebSocketClient @Inject constructor(
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                     stopHeartbeat(serial)
-                    updateState(serial, ConnectionState.DISCONNECTED)
+                    updateState(
+                        serial,
+                        if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+                    )
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     stopHeartbeat(serial)
-                    updateState(serial, ConnectionState.DISCONNECTED)
+                    updateState(
+                        serial,
+                        if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+                    )
                 }
             },
         )
@@ -118,7 +128,7 @@ class WebSocketClient @Inject constructor(
         return accepted
     }
 
-    fun disconnect() {
+    fun disconnect(showDisconnected: Boolean = true) {
         connectionSerial += 1
         socket?.close(1000, "FocusBridge disconnect")
         socket = null
@@ -126,7 +136,7 @@ class WebSocketClient @Inject constructor(
         secureReady = false
         secureTransport = false
         stopHeartbeat()
-        if (_state.value != ConnectionState.DISCONNECTED) {
+        if (showDisconnected && _state.value != ConnectionState.DISCONNECTED) {
             _state.value = ConnectionState.DISCONNECTED
         }
     }

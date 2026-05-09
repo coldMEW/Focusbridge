@@ -41,7 +41,7 @@ class SyncEngine @Inject constructor(
             }
             val pairing = pairings.active() ?: return@withLock
             for (endpoint in pairing.candidateEndpoints()) {
-                client.connect(pairing, endpointOverride = endpoint)
+                client.connect(pairing, endpointOverride = endpoint, retryingOnFailure = true)
                 val connected = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
                     client.state.first { it == ConnectionState.CONNECTED }
                 } != null
@@ -50,6 +50,7 @@ class SyncEngine @Inject constructor(
                     return@withLock
                 }
             }
+            client.disconnect(showDisconnected = true)
         }
         if (connectedNow && flushAfterConnect) {
             flushPending()

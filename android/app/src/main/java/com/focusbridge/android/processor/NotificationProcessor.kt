@@ -7,6 +7,7 @@ import com.focusbridge.android.data.repository.ConfigRepository
 import com.focusbridge.android.priority.Priority
 import com.focusbridge.android.priority.PriorityEngine
 import com.focusbridge.android.processor.parsers.DefaultParser
+import java.security.MessageDigest
 import javax.inject.Inject
 import kotlinx.coroutines.runBlocking
 
@@ -17,35 +18,45 @@ class NotificationProcessor @Inject constructor(
     private val config: ConfigRepository,
     private val appRules: AppRuleRepository,
 ) {
-    fun process(sbn: StatusBarNotification): NotificationEntity? {
-        if (!filter.shouldProcess(sbn)) return null
-        val parsed = defaultParser.parse(sbn)
+    fun process(sbn: StatusBarNotification): List<NotificationEntity> {
+        if (!filter.shouldProcess(sbn)) return emptyList()
         val rules = runBlocking { ProcessorRules.load(config) }
-        val appRule = runBlocking { appRules.get(parsed.packageName) }
-        if (appRule?.muted == true) return null
-        val searchableText = listOfNotNull(parsed.sender, parsed.message, parsed.appName, parsed.packageName)
-            .joinToString(" ")
-            .lowercase()
-        if (rules.blockedKeywords.any { searchableText.contains(it) }) return null
-        val priority = rules.overridePriority(
-            parsed = parsed,
-            current = priorityEngine.classify(parsed),
-            searchableText = searchableText,
-            appPriority = appRule?.priority == true,
-        )
-        if (rules.studyModeEnabled && appRule?.studySafe != true && priority < Priority.HIGH) return null
-        val masked = parsed.contentHidden || rules.privacyMode
-        return NotificationEntity(
-            id = stableNotificationId(sbn.key, sbn.packageName, sbn.id, sbn.tag),
-            appName = parsed.appName,
-            packageName = parsed.packageName,
-            sender = parsed.sender,
-            message = parsed.message,
-            timestamp = parsed.timestamp,
-            receivedAt = System.currentTimeMillis(),
-            priority = priority.name,
-            contentHidden = masked,
-        )
+        val baseId = stableNotificationId(sbn.key, sbn.packageName, sbn.id, sbn.tag)
+        return defaultParser.parseAll(sbn)
+            .distinctBy { parsed ->
+                listOf(parsed.packageName, parsed.sender.orEmpty(), parsed.message.orEmpty(), parsed.timestamp)
+                    .joinToString("|")
+            }
+            .mapIndexedNotNull { index, parsed ->
+                val appRule = runBlocking { appRules.get(parsed.packageName) }
+                if (appRule?.muted == true) return@mapIndexedNotNull null
+                val searchableText = listOfNotNull(parsed.sender, parsed.message, parsed.appName, parsed.packageName)
+                    .joinToString(" ")
+                    .lowercase()
+                if (rules.blockedKeywords.any { searchableText.contains(it) }) return@mapIndexedNotNull null
+                val priority = rules.overridePriority(
+                    parsed = parsed,
+                    current = priorityEngine.classify(parsed),
+                    searchableText = searchableText,
+                    appPriority = appRule?.priority == true,
+                )
+                if (rules.studyModeEnabled && appRule?.studySafe != true && priority < Priority.HIGH) {
+                    return@mapIndexedNotNull null
+                }
+                val masked = parsed.contentHidden || rules.privacyMode
+                NotificationEntity(
+                    id = contentStableNotificationId(baseId, parsed, index),
+                    appName = parsed.appName,
+                    packageName = parsed.packageName,
+                    sender = parsed.sender,
+                    message = parsed.message,
+                    timestamp = parsed.timestamp,
+                    receivedAt = System.currentTimeMillis(),
+                    priority = priority.name,
+                    contentHidden = masked,
+                    batchId = baseId,
+                )
+            }
     }
 }
 
@@ -55,6 +66,26 @@ internal fun stableNotificationId(
     id: Int,
     tag: String?,
 ): String = key?.takeIf { it.isNotBlank() } ?: "$packageName:$id:${tag.orEmpty()}"
+
+@Suppress("UNUSED_PARAMETER")
+internal fun contentStableNotificationId(
+    baseId: String,
+    parsed: ParsedNotification,
+    index: Int,
+): String {
+    val canonical = listOf(
+        parsed.packageName,
+        parsed.sender.orEmpty().trim().lowercase(),
+        parsed.message.orEmpty().trim().lowercase(),
+        parsed.timestamp.toString(),
+        index.toString(),
+    ).joinToString("|")
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(canonical.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+        .take(24)
+    return "content:$digest"
+}
 
 private data class ProcessorRules(
     val privacyMode: Boolean,

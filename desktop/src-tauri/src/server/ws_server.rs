@@ -90,6 +90,7 @@ where
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
     app.emit("focusbridge://connection", "CONNECTING")?;
     let mut active_pairing_key: Option<String> = None;
+    let mut notified_connected = false;
     let mut last_phone_seen_at = now_ms() as i64;
     let mut stale_check = interval(Duration::from_secs(5));
 
@@ -99,6 +100,11 @@ where
                 if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 45_000 {
                     state.mark_stale_connection("phone heartbeat timeout");
                     app.emit("focusbridge://connection", "DISCONNECTED")?;
+                    if notified_connected {
+                        desktop_notifications::show_connection_notification(&app, false);
+                        notified_connected = false;
+                    }
+                    active_pairing_key = None;
                     break;
                 }
                 continue;
@@ -161,6 +167,10 @@ where
                     let _ = state.send_to_phone(message);
                 }
                 app.emit("focusbridge://connection", "CONNECTED")?;
+                if !notified_connected {
+                    desktop_notifications::show_connection_notification(&app, true);
+                    notified_connected = true;
+                }
             }
             IncomingDecision::AuthFailed(reason) => {
                 warn!(peer = %peer, reason = %reason, "phone auth failed");
@@ -248,7 +258,12 @@ where
     }
 
     state.clear_phone_sender_if_current(&outbound_tx);
-    app.emit("focusbridge://connection", "DISCONNECTED")?;
+    if active_pairing_key.is_some() {
+        app.emit("focusbridge://connection", "DISCONNECTED")?;
+        if notified_connected {
+            desktop_notifications::show_connection_notification(&app, false);
+        }
+    }
     Ok(())
 }
 

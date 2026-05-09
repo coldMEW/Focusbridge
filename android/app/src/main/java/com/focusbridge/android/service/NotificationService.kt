@@ -22,16 +22,21 @@ class NotificationService : NotificationListenerService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        val entity = processor.process(sbn) ?: return
+        val entities = processor.process(sbn)
+        if (entities.isEmpty()) return
         scope.launch {
-            notifications.save(entity)
-            syncEngine.send(entity)
+            entities.forEach { entity ->
+                notifications.save(entity)
+                syncEngine.send(entity)
+            }
         }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         scope.launch {
-            notifications.markSent(stableNotificationId(sbn.key, sbn.packageName, sbn.id, sbn.tag))
+            val baseId = stableNotificationId(sbn.key, sbn.packageName, sbn.id, sbn.tag)
+            notifications.markSent(baseId)
+            notifications.markBatchSent(baseId)
         }
     }
 }

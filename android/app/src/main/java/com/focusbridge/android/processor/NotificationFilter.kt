@@ -10,6 +10,7 @@ class NotificationFilter @Inject constructor() {
         if (sbn.isOngoing) return false
         if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return false
         if ((notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0) return false
+        if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return false
         if (sbn.packageName == "android" || sbn.packageName == "com.android.systemui") return false
         val title = notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
