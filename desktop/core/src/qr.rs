@@ -32,13 +32,15 @@ pub struct QrPayload {
 #[serde(rename_all = "camelCase")]
 pub struct QrOutput {
     pub payload: String,
+    pub deep_link: String,
     pub png_base64: String,
     pub expires_at: i64,
 }
 
 pub fn make_qr(payload: &QrPayload, expires_at: i64) -> Result<QrOutput> {
     let json = serde_json::to_string(payload)?;
-    let code = QrCode::new(json.as_bytes())?;
+    let deep_link = format!("focusbridge://pair?payload={}", percent_encode(&json));
+    let code = QrCode::new(deep_link.as_bytes())?;
     let img = code.render::<Luma<u8>>().min_dimensions(256, 256).build();
     let (w, h) = (img.width(), img.height());
     let buf: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::from_raw(w, h, img.into_raw()).unwrap();
@@ -46,9 +48,22 @@ pub fn make_qr(payload: &QrPayload, expires_at: i64) -> Result<QrOutput> {
     buf.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)?;
     Ok(QrOutput {
         payload: json,
+        deep_link,
         png_base64: B64.encode(&png_bytes),
         expires_at,
     })
+}
+
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -71,6 +86,26 @@ mod tests {
         let out = make_qr(&p, 10).unwrap();
         assert!(!out.png_base64.is_empty());
         assert_eq!(out.expires_at, 10);
+    }
+
+    #[test]
+    fn qr_code_uses_focusbridge_deep_link_while_manual_payload_stays_json() {
+        let p = QrPayload {
+            v: 1,
+            mode: "local".into(),
+            endpoint: "1.2.3.4:9173".into(),
+            endpoint_candidates: vec![],
+            relay_url: None,
+            device_pair_id: None,
+            device_id: "id".into(),
+            pairing_key: "a".repeat(64),
+            cert_fingerprint: "b".repeat(64),
+        };
+
+        let out = make_qr(&p, 10).unwrap();
+
+        assert!(out.payload.starts_with('{'));
+        assert!(out.deep_link.starts_with("focusbridge://pair?payload="));
     }
 
     #[test]

@@ -30,6 +30,15 @@ interface GoogleSignInResult {
 type AccountMode = "login" | "signup" | "guest";
 type LockMode = "unlock" | "setup" | "recover";
 
+const SECURITY_QUESTIONS = [
+  "What city were you born in?",
+  "What was the name of your first school?",
+  "What was your childhood nickname?",
+  "What is the name of your favorite teacher?",
+  "What was the model of your first phone?",
+  "Custom question",
+];
+
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [relayEmail, setRelayEmail] = useState<string | null>(null);
@@ -521,7 +530,27 @@ function LocalLockPanel(props: {
           />
           {!props.configured && (
             <>
-              <input value={props.securityQuestion} onChange={(event) => props.setSecurityQuestion(event.target.value)} className="auth-input" placeholder="Security question, e.g. What city did I grow up in?" />
+              <select
+                value={SECURITY_QUESTIONS.includes(props.securityQuestion) ? props.securityQuestion : "Custom question"}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  props.setSecurityQuestion(value === "Custom question" ? "" : value);
+                }}
+                className="auth-input"
+              >
+                <option value="" disabled>Choose a security question</option>
+                {SECURITY_QUESTIONS.map((question) => (
+                  <option key={question} value={question}>{question}</option>
+                ))}
+              </select>
+              {(!props.securityQuestion || !SECURITY_QUESTIONS.includes(props.securityQuestion)) && (
+                <input
+                  value={props.securityQuestion}
+                  onChange={(event) => props.setSecurityQuestion(event.target.value)}
+                  className="auth-input"
+                  placeholder="Write your custom security question"
+                />
+              )}
               <input value={props.securityAnswer} onChange={(event) => props.setSecurityAnswer(event.target.value)} className="auth-input" placeholder="Security answer" />
             </>
           )}

@@ -174,8 +174,8 @@ export default function App() {
       <div className="ambient-orb ambient-orb-one" />
       <div className="ambient-orb ambient-orb-two" />
       <div className="relative z-10 flex h-full p-4">
-        <aside className="glass-panel flex w-[248px] shrink-0 flex-col overflow-hidden rounded-[28px] p-4">
-          <div className="mb-7">
+        <aside className="glass-panel flex max-h-full w-[248px] shrink-0 flex-col overflow-hidden rounded-[28px] p-4">
+          <div className="mb-5 shrink-0">
             <img
               src={logo}
               alt="FocusBridge logo"
@@ -191,8 +191,10 @@ export default function App() {
               One focused bridge between your phone and desktop.
             </p>
           </div>
-          <FilterPanel />
-          <div className="mt-auto rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            <FilterPanel />
+          </div>
+          <div className="mt-4 shrink-0 rounded-3xl border border-border-subtle bg-bg-secondary/70 p-4">
             <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
               Device status
             </div>

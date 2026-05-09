@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -93,6 +94,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.lifecycleScope
 import com.focusbridge.android.data.local.NotificationEntity
 import com.focusbridge.android.data.local.PairingEntity
 import com.focusbridge.android.data.repository.ConfigRepository
@@ -125,6 +127,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        consumePairingIntent(intent)
         setContent {
             FocusBridgeTheme {
                 FocusBridgeScreen(
@@ -147,6 +150,29 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumePairingIntent(intent)
+    }
+
+    private fun consumePairingIntent(intent: Intent?) {
+        val payload = intent?.data?.toString()?.takeIf { it.startsWith("focusbridge://pair") } ?: return
+        lifecycleScope.launch {
+            runCatching { pairingManager.consume(payload) }
+                .onSuccess {
+                    ContextCompat.startForegroundService(
+                        this@MainActivity,
+                        Intent(this@MainActivity, SyncForegroundService::class.java),
+                    )
+                    Toast.makeText(this@MainActivity, "FocusBridge paired. Starting sync.", Toast.LENGTH_LONG).show()
+                }
+                .onFailure {
+                    Toast.makeText(this@MainActivity, "Pairing failed: ${it.message}", Toast.LENGTH_LONG).show()
+                }
         }
     }
 }

@@ -88,11 +88,11 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
           >
             {refreshing ? "Refreshing QR..." : "Refresh QR / network"}
           </button>
-          <div className="rounded-3xl bg-bg-secondary/80 p-3">
+          <div className="min-w-0 overflow-hidden rounded-3xl bg-bg-secondary/80 p-3">
             <div className="text-[11px] uppercase tracking-[0.2em] text-text-muted">
               Manual payload
             </div>
-            <code className="mt-2 block max-h-24 overflow-auto break-all text-[11px] leading-5 text-text-secondary">
+            <code className="mt-2 block max-h-24 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-bg-primary/70 p-2 text-[11px] leading-5 text-text-secondary">
               {qr.payload}
             </code>
           </div>

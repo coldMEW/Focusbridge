@@ -2,6 +2,8 @@ package com.focusbridge.android.pairing
 
 import com.focusbridge.android.data.local.PairingEntity
 import com.focusbridge.android.data.repository.PairingRepository
+import java.net.URI
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import kotlinx.serialization.Serializable
@@ -65,7 +67,7 @@ class PairingManager @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun consume(rawQrPayload: String): PairingEntity {
-        val payload = json.decodeFromString(QrPairingPayload.serializer(), rawQrPayload)
+        val payload = json.decodeFromString(QrPairingPayload.serializer(), pairingPayloadFromInput(rawQrPayload))
         val candidates = payload.syncEndpointCandidates()
         val pairing = PairingEntity(
             deviceId = payload.deviceId,
@@ -78,4 +80,18 @@ class PairingManager @Inject constructor(
         repository.save(pairing)
         return pairing
     }
+}
+
+internal fun pairingPayloadFromInput(input: String): String {
+    val trimmed = input.trim()
+    if (!trimmed.startsWith("focusbridge://", ignoreCase = true)) return trimmed
+    val uri = URI(trimmed)
+    require(uri.host == "pair") { "Unsupported FocusBridge link" }
+    val payload = uri.rawQuery
+        ?.split('&')
+        ?.firstOrNull { it.substringBefore('=') == "payload" }
+        ?.substringAfter('=', "")
+        ?.takeIf { it.isNotBlank() }
+    return requireNotNull(payload) { "Missing pairing payload" }
+        .let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
 }
