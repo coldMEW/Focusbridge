@@ -15,6 +15,9 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 ## Most Recent Work
 
+- Fixed phone-side manual disconnect lag: desktop core now routes incoming `UNPAIR` as an explicit `ManualDisconnect` decision instead of `Unknown`, and the desktop WebSocket loop immediately clears the sender, marks pairings inactive, emits `DISCONNECTED`, closes the socket, and shows the disconnected notification.
+- Android manual disconnect now updates the local connection state synchronously before persisting the manual-disconnect flag, so the phone UI does not wait on storage before switching out of connected mode.
+- Rebuilt production artifacts after the disconnect-state fix and copied them to `FocusBridge-v1.0.0-latest-release`.
 - Current connection fix adds a persistent Android `phoneInstallId` sent in `AUTH`. Desktop now stores previous phones by that stable install identity instead of the temporary QR session ID, validates saved pairing keys for reconnects, and still falls back to old QR-device rows so existing paired devices can migrate forward after their next successful connection.
 - Desktop previous-device storage now dedupes legacy rows when the same phone name/endpoint reconnects under the stable identity. Reconnect reliability also gets a longer 180-second heartbeat timeout on both desktop and Android to reduce false disconnects from Android background scheduling jitter.
 - Desktop Focus Rules `Study Mode` is now a real clickable toggle that persists through the same `set_study_mode` command used elsewhere. Manual disconnect is visible on desktop diagnostics only while connected, sends `UNPAIR`, clears the active sender, and marks diagnostics disconnected.

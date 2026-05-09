@@ -13,6 +13,7 @@ pub enum IncomingDecision {
     StatusUpdate(Value),
     AppInventory(Value),
     RulesAck(Value),
+    ManualDisconnect,
     Unknown,
 }
 
@@ -53,13 +54,13 @@ pub fn handle_envelope(env: &Envelope, expected_pairing_key: &str) -> IncomingDe
         MessageType::Status => IncomingDecision::StatusUpdate(env.payload.clone()),
         MessageType::AppInventory => IncomingDecision::AppInventory(env.payload.clone()),
         MessageType::RulesAck => IncomingDecision::RulesAck(env.payload.clone()),
+        MessageType::Unpair => IncomingDecision::ManualDisconnect,
         MessageType::AuthOk
         | MessageType::AuthFailed
         | MessageType::NotificationAck
         | MessageType::Pong
         | MessageType::RulesUpdate
         | MessageType::DesktopAction
-        | MessageType::Unpair
         | MessageType::Encrypted => IncomingDecision::Unknown,
     }
 }
@@ -128,5 +129,11 @@ mod tests {
             handle_envelope(&e, "k"),
             IncomingDecision::AppInventory(payload)
         );
+    }
+
+    #[test]
+    fn routes_unpair_as_manual_disconnect() {
+        let e = env(MessageType::Unpair, json!({ "reason": "manual_disconnect" }));
+        assert_eq!(handle_envelope(&e, "k"), IncomingDecision::ManualDisconnect);
     }
 }

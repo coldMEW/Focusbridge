@@ -170,16 +170,16 @@ class WebSocketClient @Inject constructor(
     }
 
     fun manualDisconnect() {
+        val message = Protocol.disconnectRequest()
+        val key = activePairingKey
+        if (key != null) {
+            socket?.sendSecure(key, message)
+        } else {
+            socket?.send(message)
+        }
+        disconnect(showDisconnected = true)
         scope.launch {
             config.set("manual_disconnect", "true")
-            val message = Protocol.disconnectRequest()
-            val key = activePairingKey
-            if (key != null) {
-                socket?.sendSecure(key, message)
-            } else {
-                socket?.send(message)
-            }
-            disconnect(showDisconnected = true)
         }
     }
 

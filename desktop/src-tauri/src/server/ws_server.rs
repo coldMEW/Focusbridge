@@ -280,6 +280,18 @@ where
             IncomingDecision::RulesAck(payload) => {
                 app.emit("focusbridge://rules-ack", payload)?;
             }
+            IncomingDecision::ManualDisconnect => {
+                state.mark_manual_disconnect();
+                store::mark_pairings_disconnected(&state.db_path)?;
+                app.emit("focusbridge://connection", "DISCONNECTED")?;
+                if notified_connected {
+                    desktop_notifications::show_connection_notification(&app, false);
+                    notified_connected = false;
+                }
+                ws.close(None).await.ok();
+                active_pairing_key = None;
+                break;
+            }
             IncomingDecision::Unknown => {}
         }
     }
