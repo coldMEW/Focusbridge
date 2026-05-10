@@ -9,6 +9,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -23,9 +25,13 @@ class SyncEngine @Inject constructor(
     private val connectMutex = Mutex()
 
     suspend fun maintainActivePairing() {
-        while (true) {
-            if (!client.isConnected() && !isManuallyDisconnected()) {
-                connectActivePairing()
+        while (currentCoroutineContext().isActive) {
+            runCatching {
+                if (!client.isConnected() && !isManuallyDisconnected()) {
+                    connectActivePairing()
+                }
+            }.onFailure {
+                client.disconnect(showDisconnected = true)
             }
             delay(RECONNECT_INTERVAL_MS)
         }

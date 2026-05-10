@@ -173,6 +173,33 @@ pub fn list_paired_devices(
 }
 
 #[tauri::command]
+pub fn delete_paired_device(
+    device_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    let active = store::list_paired_devices(&state.db_path)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .any(|device| device.device_id == device_id && device.is_active != 0);
+    if active {
+        let message = serde_json::to_string(&json!({
+            "version": 1,
+            "type": "UNPAIR",
+            "payload": {
+                "reason": "desktop_deleted_pairing"
+            }
+        }))
+        .map_err(|e| e.to_string())?;
+        let _ = state.send_to_phone(message);
+        state.mark_manual_disconnect();
+        app.emit("focusbridge://connection", "DISCONNECTED")
+            .map_err(|e| e.to_string())?;
+    }
+    store::delete_paired_device(&state.db_path, &device_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn disconnect_phone(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,

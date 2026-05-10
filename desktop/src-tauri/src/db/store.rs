@@ -427,6 +427,15 @@ pub fn list_paired_devices(db_path: &Path) -> Result<Vec<PairedDeviceRow>> {
         .context("collect paired devices")
 }
 
+pub fn delete_paired_device(db_path: &Path, device_id: &str) -> Result<usize> {
+    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    conn.execute(
+        "DELETE FROM paired_devices WHERE device_id = ?1",
+        params![device_id],
+    )
+    .context("delete paired device")
+}
+
 fn notification_from_payload(payload: &Value) -> NotificationRow {
     let now = now_millis();
     NotificationRow {

@@ -62,6 +62,7 @@ pub fn run() {
             commands::pairing_cmd::generate_pairing_qr,
             commands::pairing_cmd::consume_pairing,
             commands::pairing_cmd::list_paired_devices,
+            commands::pairing_cmd::delete_paired_device,
             commands::pairing_cmd::disconnect_phone,
             commands::pairing_cmd::request_device_reconnect,
             commands::settings_cmd::get_settings,

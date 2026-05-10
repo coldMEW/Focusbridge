@@ -15,6 +15,9 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 ## Most Recent Work
 
+- Current persistence slice hardens Android background sync: the foreground sync service now explicitly starts with the `dataSync` foreground-service type, holds a non-reference-counted partial wake lock and Wi-Fi lock while the service is alive, restarts from `onTaskRemoved`, and declares `WAKE_LOCK`. This is intentionally aggressive for LAN reliability and should be revisited before Play Store release if battery policy warnings become a concern.
+- Android `SyncEngine.maintainActivePairing()` is now exception-proof. A failed reconnect attempt disconnects the stale client but does not kill the supervisor loop, fixing the case where sync only recovered when the user reopened the app.
+- Desktop Previous Connections now has a delete button. Deleting a saved active device sends `UNPAIR`, marks desktop disconnected, and removes the pairing row from SQLite; inactive rows are removed directly.
 - Fixed phone-side manual disconnect lag: desktop core now routes incoming `UNPAIR` as an explicit `ManualDisconnect` decision instead of `Unknown`, and the desktop WebSocket loop immediately clears the sender, marks pairings inactive, emits `DISCONNECTED`, closes the socket, and shows the disconnected notification.
 - Android manual disconnect now updates the local connection state synchronously before persisting the manual-disconnect flag, so the phone UI does not wait on storage before switching out of connected mode.
 - Rebuilt production artifacts after the disconnect-state fix and copied them to `FocusBridge-v1.0.0-latest-release`.

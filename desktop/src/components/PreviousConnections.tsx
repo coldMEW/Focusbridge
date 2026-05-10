@@ -55,6 +55,23 @@ export default function PreviousConnections() {
     }
   };
 
+  const deleteDevice = async (device: PairedDevice) => {
+    const summary = summarizePairedDevice(device, state);
+    const confirmed = window.confirm(
+      `Remove ${summary.name} from previous connections? You can pair it again later.`,
+    );
+    if (!confirmed) return;
+    setMessage(`Removing ${summary.name}...`);
+    try {
+      await invoke<number>("delete_paired_device", { deviceId: device.deviceId });
+      setDevices((current) => current.filter((row) => row.deviceId !== device.deviceId));
+      setMessage(`${summary.name} removed from previous connections.`);
+      refreshDevices();
+    } catch (error) {
+      setMessage(`Remove failed: ${String(error)}`);
+    }
+  };
+
   return (
     <section className="glass-panel shrink-0 rounded-[32px] p-5">
       <div className="flex items-start justify-between gap-3">
@@ -109,12 +126,21 @@ export default function PreviousConnections() {
                   }
                 />
               </div>
-              <button
-                onClick={() => void requestReconnect(device)}
-                className="mt-3 w-full rounded-full border border-border-subtle bg-bg-primary/60 px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-border-hover hover:text-text-primary active:scale-95"
-              >
-                {summary.connected ? "Ask phone to confirm sync" : "Reconnect this phone"}
-              </button>
+              <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <button
+                  onClick={() => void requestReconnect(device)}
+                  className="rounded-full border border-border-subtle bg-bg-primary/60 px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-border-hover hover:text-text-primary active:scale-95"
+                >
+                  {summary.connected ? "Ask phone to confirm sync" : "Reconnect this phone"}
+                </button>
+                <button
+                  onClick={() => void deleteDevice(device)}
+                  className="rounded-full border border-[#f0b8aa] bg-[#fff0eb] px-3 py-2 text-xs font-semibold text-[#8f3324] transition hover:bg-[#ffe4dc] active:scale-95"
+                  title={`Remove ${summary.name}`}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           );
         })}
