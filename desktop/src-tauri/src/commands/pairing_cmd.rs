@@ -85,15 +85,15 @@ pub(crate) fn local_ipv4_candidates() -> Vec<String> {
     let mut candidates = BTreeSet::new();
 
     if let Some(ip) = route_ipv4() {
-        candidates.insert(format!("ws://{ip}:9173"));
+        candidates.insert(format!("wss://{ip}:9173"));
     }
 
     for ip in command_ipv4_candidates() {
-        candidates.insert(format!("ws://{ip}:9173"));
+        candidates.insert(format!("wss://{ip}:9173"));
     }
 
     if candidates.is_empty() {
-        candidates.insert("ws://127.0.0.1:9173".to_string());
+        candidates.insert("wss://127.0.0.1:9173".to_string());
     }
 
     candidates.into_iter().collect()
@@ -117,7 +117,7 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
     let endpoint = endpoint_candidates
         .first()
         .cloned()
-        .unwrap_or_else(|| "ws://127.0.0.1:9173".to_string());
+        .unwrap_or_else(|| "wss://127.0.0.1:9173".to_string());
     let expires_at = existing
         .as_ref()
         .map(|session| session.expires_at)

@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, timeout, Duration};
 use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{accept_async, WebSocketStream};
 use tracing::{error, info, warn};
@@ -57,24 +57,23 @@ async fn handle_connection(
     tls_acceptor: TlsAcceptor,
 ) -> Result<()> {
     let mut first = [0u8; 1];
-    let peeked = stream
-        .peek(&mut first)
+    let peeked = timeout(Duration::from_secs(10), stream.peek(&mut first))
         .await
+        .context("connection preface timeout")?
         .context("peek websocket tcp")?;
     if peeked > 0 && first[0] == 0x16 {
-        let tls_stream = tls_acceptor.accept(stream).await.context("accept tls")?;
-        let ws = accept_async(tls_stream)
+        let tls_stream = timeout(Duration::from_secs(10), tls_acceptor.accept(stream))
             .await
+            .context("TLS handshake timeout")?
+            .context("accept tls")?;
+        let ws = timeout(Duration::from_secs(10), accept_async(tls_stream))
+            .await
+            .context("WebSocket handshake timeout")?
             .context("accept secure websocket")?;
         state.mark_transport("wss");
         handle_websocket(ws, peer, state, app).await
     } else {
-        warn!(peer = %peer, "accepting legacy plaintext websocket; ask user to refresh QR for WSS pinning");
-        let ws = accept_async(stream)
-            .await
-            .context("accept legacy websocket")?;
-        state.mark_transport("ws_legacy");
-        handle_websocket(ws, peer, state, app).await
+        anyhow::bail!("plaintext pairing is disabled; update Android and scan a new QR")
     }
 }
 
@@ -88,23 +87,19 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
-    app.emit("focusbridge://connection", "CONNECTING")?;
     let mut active_pairing_key: Option<String> = None;
     let mut notified_connected = false;
     let mut last_phone_seen_at = now_ms() as i64;
     let mut stale_check = interval(Duration::from_secs(5));
 
-    loop {
+    let result: Result<()> = async {
+      loop {
         let msg = tokio::select! {
             _ = stale_check.tick() => {
+                if active_pairing_key.is_none() && now_ms() as i64 - last_phone_seen_at > 10_000 {
+                    break;
+                }
                 if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 180_000 {
-                    state.mark_stale_connection("phone heartbeat timeout");
-                    app.emit("focusbridge://connection", "DISCONNECTED")?;
-                    if notified_connected {
-                        desktop_notifications::show_connection_notification(&app, false);
-                        notified_connected = false;
-                    }
-                    active_pairing_key = None;
                     break;
                 }
                 continue;
@@ -136,6 +131,15 @@ where
         last_phone_seen_at = now_ms() as i64;
         let mut envelope: Envelope =
             serde_json::from_str(&text).context("parse focusbridge envelope")?;
+        // Application messages must never run before this socket authenticates.
+        if active_pairing_key.is_none() && envelope.r#type != MessageType::Auth {
+            ws.close(None).await.ok();
+            break;
+        }
+        if active_pairing_key.is_some() && envelope.r#type == MessageType::Auth {
+            ws.close(None).await.ok();
+            break;
+        }
         let expected_key = if let Some(key) = active_pairing_key.as_deref() {
             key.to_string()
         } else {
@@ -145,6 +149,9 @@ where
             let decrypted = decrypt_payload(&expected_key, &envelope.payload)?;
             envelope =
                 serde_json::from_str(&decrypted).context("parse encrypted focusbridge envelope")?;
+            if envelope.r#type == MessageType::Auth {
+                break;
+            }
         }
 
         match handle_envelope(&envelope, &expected_key) {
@@ -201,13 +208,12 @@ where
             }
             IncomingDecision::AuthFailed(reason) => {
                 warn!(peer = %peer, reason = %reason, "phone auth failed");
-                state.mark_auth_failed(&reason);
                 ws.send(tokio_tungstenite::tungstenite::Message::Text(
                     r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
                 ))
                 .await
                 .ok();
-                app.emit("focusbridge://connection", "DISCONNECTED")?;
+                break;
             }
             IncomingDecision::StoreNotification(payload) => {
                 let existed = payload
@@ -281,29 +287,23 @@ where
                 app.emit("focusbridge://rules-ack", payload)?;
             }
             IncomingDecision::ManualDisconnect => {
-                state.mark_manual_disconnect();
-                store::mark_pairings_disconnected(&state.db_path)?;
-                app.emit("focusbridge://connection", "DISCONNECTED")?;
-                if notified_connected {
-                    desktop_notifications::show_connection_notification(&app, false);
-                    notified_connected = false;
-                }
                 ws.close(None).await.ok();
-                active_pairing_key = None;
                 break;
             }
             IncomingDecision::Unknown => {}
         }
     }
+      Ok(())
+    }.await;
 
-    state.clear_phone_sender_if_current(&outbound_tx);
-    if active_pairing_key.is_some() {
+    if state.clear_phone_sender_if_current(&outbound_tx) {
+        store::mark_pairings_disconnected(&state.db_path)?;
         app.emit("focusbridge://connection", "DISCONNECTED")?;
         if notified_connected {
             desktop_notifications::show_connection_notification(&app, false);
         }
     }
-    Ok(())
+    result
 }
 
 fn now_ms() -> u128 {
@@ -335,7 +335,10 @@ fn expected_pairing_key_for_envelope(state: &AppState, envelope: &Envelope) -> O
         .unwrap_or(qr_device_id);
 
     if let Some(session) = state.current_pairing() {
-        if session.pairing_key == presented_key && session.device_id == qr_device_id {
+        if session.expires_at > now_ms() as i64
+            && session.pairing_key == presented_key
+            && session.device_id == qr_device_id
+        {
             return Some(session.pairing_key);
         }
     }

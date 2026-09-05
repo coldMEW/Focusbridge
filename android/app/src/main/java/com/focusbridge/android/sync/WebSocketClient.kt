@@ -75,7 +75,17 @@ class WebSocketClient @Inject constructor(
         secureTransport = false
         _state.value = ConnectionState.CONNECTING
         val rawEndpoint = endpointOverride ?: pairing.endpoint
-        val endpoint = if (rawEndpoint.startsWith("ws")) rawEndpoint else "ws://$rawEndpoint"
+        val endpoint = when {
+            rawEndpoint.startsWith("wss://") -> rawEndpoint
+            rawEndpoint.startsWith("ws://") -> "wss://${rawEndpoint.removePrefix("ws://")}"
+            else -> "wss://$rawEndpoint"
+        }
+        require(pairing.mode.equals("LOCAL", ignoreCase = true)) {
+            "Relay sync requires the new end-to-end pairing protocol"
+        }
+        require(pairing.certFingerprint.matches(Regex("[a-fA-F0-9]{64}"))) {
+            "Refresh the desktop QR and pair again: a valid certificate fingerprint is required"
+        }
         val request = Request.Builder().url(endpoint).build()
         secureTransport = endpoint.startsWith("wss://") && pairing.certFingerprint.isNotBlank()
         val client = if (secureTransport) {
@@ -87,6 +97,7 @@ class WebSocketClient @Inject constructor(
             request,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    if (serial != connectionSerial) { webSocket.cancel(); return }
                     webSocket.send(
                         Protocol.auth(
                             pairingKey = pairing.pairingKey,
@@ -98,6 +109,7 @@ class WebSocketClient @Inject constructor(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (serial != connectionSerial) return
                     var envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return
                     if (envelope.type == MessageType.ENCRYPTED) {
                         val payload = envelope.payload as? JsonObject ?: return
@@ -147,6 +159,7 @@ class WebSocketClient @Inject constructor(
     }
 
     fun send(text: String): Boolean {
+        if (!isConnected()) return false
         val key = activePairingKey
         val body = if (secureReady && key != null) SecureEnvelope.encrypt(key, text) else text
         val accepted = socket?.send(body) == true

@@ -1,6 +1,6 @@
 # FocusBridge Project Memory
 
-Last updated: 2026-05-09
+Last updated: 2026-09-05
 
 ## Product
 
@@ -15,6 +15,9 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 ## Most Recent Work
 
+- September audit supersedes prior production-ready claims. See `docs/network-security-audit-2026-09-05.md` for verified fixes, open security blockers, and hosting setup. Public relay hosting is not configured; user has no server/domain yet. Relay privacy needs separate authentication capabilities and encryption secrets before deployment.
+- September patch fixes aggregate Android counts, missing ACK retries during connected sessions, cancellation handling, stale Android callbacks, pre-auth desktop message processing, empty auth keys, nonce-length panic, expired QR acceptance, and socket cleanup on errors. Local endpoints now require pinned WSS; both clients need updating. Legacy cloud mode is explicitly blocked pending the secure relay protocol.
+- Verification: Android unit tests and debug APK pass; Rust core has 24 passing tests; desktop cargo check passes. No physical-device network/Doze acceptance test or production release was performed for this checkpoint.
 - Current persistence slice hardens Android background sync: the foreground sync service now explicitly starts with the `dataSync` foreground-service type, holds a non-reference-counted partial wake lock and Wi-Fi lock while the service is alive, restarts from `onTaskRemoved`, and declares `WAKE_LOCK`. This is intentionally aggressive for LAN reliability and should be revisited before Play Store release if battery policy warnings become a concern.
 - Android `SyncEngine.maintainActivePairing()` is now exception-proof. A failed reconnect attempt disconnects the stale client but does not kill the supervisor loop, fixing the case where sync only recovered when the user reopened the app.
 - Desktop Previous Connections now has a delete button. Deleting a saved active device sends `UNPAIR`, marks desktop disconnected, and removes the pairing row from SQLite; inactive rows are removed directly.

@@ -26,13 +26,13 @@ class PairingPayloadTest {
 
         assertEquals("192.168.1.24:9173", payload.syncEndpoint())
         assertEquals(
-            listOf("192.168.1.24:9173", "10.0.0.4:9173"),
+            listOf("wss://192.168.1.24:9173", "wss://10.0.0.4:9173"),
             payload.syncEndpointCandidates(),
         )
     }
 
     @Test
-    fun localWssPairingPrefersPlaintextFallbacksForMigration() {
+    fun localWssPairingNeverDowngradesToPlaintext() {
         val payload = json.decodeFromString(
             QrPairingPayload.serializer(),
             """
@@ -50,9 +50,7 @@ class PairingPayloadTest {
 
         assertEquals(
             listOf(
-                "ws://192.168.1.24:9173",
                 "wss://192.168.1.24:9173",
-                "ws://10.0.0.4:9173",
                 "wss://10.0.0.4:9173",
             ),
             payload.syncEndpointCandidates(),

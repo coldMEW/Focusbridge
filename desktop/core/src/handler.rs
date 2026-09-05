@@ -18,6 +18,9 @@ pub enum IncomingDecision {
 }
 
 pub fn handle_envelope(env: &Envelope, expected_pairing_key: &str) -> IncomingDecision {
+    if env.version != 1 || expected_pairing_key.is_empty() {
+        return IncomingDecision::AuthFailed("unsupported version or missing session key".into());
+    }
     match env.r#type {
         MessageType::Auth => {
             let Some(key) = env.payload.get("pairingKey").and_then(|v| v.as_str()) else {
@@ -69,6 +72,20 @@ pub fn handle_envelope(env: &Envelope, expected_pairing_key: &str) -> IncomingDe
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn rejects_empty_key_and_unsupported_version() {
+        let mut message = env(MessageType::Auth, json!({"pairingKey": ""}));
+        assert!(matches!(
+            handle_envelope(&message, ""),
+            IncomingDecision::AuthFailed(_)
+        ));
+        message.version = 2;
+        assert!(matches!(
+            handle_envelope(&message, "k"),
+            IncomingDecision::AuthFailed(_)
+        ));
+    }
 
     fn env(t: MessageType, payload: Value) -> Envelope {
         Envelope {
@@ -133,7 +150,10 @@ mod tests {
 
     #[test]
     fn routes_unpair_as_manual_disconnect() {
-        let e = env(MessageType::Unpair, json!({ "reason": "manual_disconnect" }));
+        let e = env(
+            MessageType::Unpair,
+            json!({ "reason": "manual_disconnect" }),
+        );
         assert_eq!(handle_envelope(&e, "k"), IncomingDecision::ManualDisconnect);
     }
 }

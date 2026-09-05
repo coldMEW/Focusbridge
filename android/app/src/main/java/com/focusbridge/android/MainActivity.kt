@@ -231,6 +231,8 @@ private fun FocusBridgeScreen(
 ) {
     val context = LocalContext.current
     val items by notifications.observeRecent().collectAsState(initial = emptyList())
+    val capturedCount by remember(notifications) { notifications.observeCount() }.collectAsState(initial = 0L)
+    val priorityCount by remember(notifications) { notifications.observePriorityCount() }.collectAsState(initial = 0L)
     val activePairing by pairingRepository.observeActive().collectAsState(initial = null)
     val studyModeFlow = remember(configRepository) {
         configRepository.observe("study_mode_enabled").map { it == "true" }
@@ -371,6 +373,8 @@ private fun FocusBridgeScreen(
                 Box(modifier = Modifier.weight(1f)) {
                     when (tab) {
                         AppTab.Home -> HomeTab(
+                            capturedCount = capturedCount,
+                            priorityCount = priorityCount,
                             items = items,
                             activePairing = activePairing,
                             connectionState = connectionState,
@@ -581,6 +585,8 @@ private fun ConnectionBlinker(state: ConnectionState) {
 
 @Composable
 private fun HomeTab(
+    capturedCount: Long,
+    priorityCount: Long,
     items: List<NotificationEntity>,
     activePairing: PairingEntity?,
     connectionState: ConnectionState,
@@ -597,13 +603,13 @@ private fun HomeTab(
         item {
             if (compact) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatCard("Captured", items.size.toString())
-                    StatCard("Priority", items.count { it.priority == "URGENT" || it.priority == "HIGH" }.toString())
+                    StatCard("Captured", capturedCount.toString())
+                    StatCard("Priority", priorityCount.toString())
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatCard("Captured", items.size.toString(), Modifier.weight(1f))
-                    StatCard("Priority", items.count { it.priority == "URGENT" || it.priority == "HIGH" }.toString(), Modifier.weight(1f))
+                    StatCard("Captured", capturedCount.toString(), Modifier.weight(1f))
+                    StatCard("Priority", priorityCount.toString(), Modifier.weight(1f))
                 }
             }
         }

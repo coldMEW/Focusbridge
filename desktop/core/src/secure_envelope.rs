@@ -46,6 +46,9 @@ pub fn decrypt_payload(pairing_key: &str, payload: &Value) -> Result<String> {
         .and_then(Value::as_str)
         .context("missing encrypted ciphertext")?;
     let nonce = BASE64_STANDARD.decode(nonce).context("decode nonce")?;
+    if nonce.len() != 12 {
+        return Err(anyhow!("invalid AES-GCM nonce length"));
+    }
     let ciphertext = BASE64_STANDARD
         .decode(ciphertext)
         .context("decode ciphertext")?;
@@ -58,6 +61,15 @@ pub fn decrypt_payload(pairing_key: &str, payload: &Value) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_nonce_returns_error_without_panicking() {
+        for length in [0, 1, 11, 13, 32] {
+            let payload =
+                json!({"nonce": BASE64_STANDARD.encode(vec![0; length]), "ciphertext": ""});
+            assert!(decrypt_payload("secret", &payload).is_err());
+        }
+    }
 
     #[test]
     fn encrypted_envelope_roundtrips() {

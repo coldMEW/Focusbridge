@@ -8,6 +8,7 @@ import com.focusbridge.android.pairing.DeviceInfo
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.currentCoroutineContext
@@ -26,11 +27,16 @@ class SyncEngine @Inject constructor(
 
     suspend fun maintainActivePairing() {
         while (currentCoroutineContext().isActive) {
-            runCatching {
+            try {
                 if (!client.isConnected() && !isManuallyDisconnected()) {
                     connectActivePairing()
+                } else if (client.isConnected() && !isManuallyDisconnected()) {
+                    flushPending()
                 }
-            }.onFailure {
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                android.util.Log.w("FocusBridgeSync", "Sync attempt failed; retry scheduled", failure)
                 client.disconnect(showDisconnected = true)
             }
             delay(RECONNECT_INTERVAL_MS)
@@ -73,6 +79,7 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun send(notification: NotificationEntity) {
+        if (isManuallyDisconnected()) return
         if (!client.isConnected()) {
             connectActivePairing(flushAfterConnect = false)
         }

@@ -12,6 +12,10 @@ class NotificationRepository @Inject constructor(
 ) {
     fun observeRecent(): Flow<List<NotificationEntity>> = dao.observeRecent()
 
+    fun observeCount(): Flow<Long> = dao.observeCount()
+
+    fun observePriorityCount(): Flow<Long> = dao.observePriorityCount()
+
     suspend fun save(notification: NotificationEntity) = dao.upsert(notification)
 
     suspend fun markSent(id: String) = dao.setStatus(id, "SENT")

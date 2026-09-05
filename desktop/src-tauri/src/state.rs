@@ -86,7 +86,7 @@ impl AppState {
         });
     }
 
-    pub fn clear_phone_sender_if_current(&self, sender: &UnboundedSender<String>) {
+    pub fn clear_phone_sender_if_current(&self, sender: &UnboundedSender<String>) -> bool {
         let mut current = self
             .phone_sender
             .lock()
@@ -103,7 +103,9 @@ impl AppState {
                 diag.active_transport = "none".into();
                 diag.last_disconnect_reason = Some("socket closed".into());
             });
+            return true;
         }
+        false
     }
 
     pub fn send_to_phone(&self, message: String) -> bool {

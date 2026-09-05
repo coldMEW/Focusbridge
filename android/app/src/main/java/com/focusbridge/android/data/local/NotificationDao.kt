@@ -8,6 +8,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface NotificationDao {
+    @Query("SELECT COUNT(*) FROM notifications")
+    fun observeCount(): Flow<Long>
+
+    @Query("SELECT COUNT(*) FROM notifications WHERE priority IN ('URGENT', 'HIGH')")
+    fun observePriorityCount(): Flow<Long>
+
     @Query("SELECT * FROM notifications ORDER BY receivedAt DESC LIMIT :limit")
     fun observeRecent(limit: Int = 100): Flow<List<NotificationEntity>>
 
