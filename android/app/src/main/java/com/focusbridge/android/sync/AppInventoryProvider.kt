@@ -30,12 +30,13 @@ class AppInventoryProvider @Inject constructor(
             .filter { appInfo -> appInfo.isUserControllableApp(launcherPackages) }
             .mapNotNull { info ->
                 val packageName = info.packageName ?: return@mapNotNull null
-                val label = info.loadLabel(manager).toString().takeIf { it.isNotBlank() } ?: packageName
+                val label = runCatching { info.loadLabel(manager).toString() }
+                    .getOrNull()?.takeIf { it.isNotBlank() } ?: packageName
                 AppInventoryItem(
                     packageName = packageName,
                     label = label,
                     category = categorize(packageName, label),
-                    iconDataUrl = info.loadIcon(manager)?.toDataUrl(),
+                    iconDataUrl = runCatching { info.loadIcon(manager)?.toDataUrl() }.getOrNull(),
                 )
             }
         return installed

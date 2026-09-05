@@ -1,7 +1,7 @@
 package com.focusbridge.android.pairing
 
 import com.focusbridge.android.data.local.PairingEntity
-import com.focusbridge.android.data.repository.ConfigRepository
+import com.focusbridge.android.sync.WebSocketClient
 import com.focusbridge.android.data.repository.PairingRepository
 import java.net.URI
 import java.net.URLDecoder
@@ -64,7 +64,7 @@ private fun String.toRelayWebSocketBase(): String {
 
 class PairingManager @Inject constructor(
     private val repository: PairingRepository,
-    private val config: ConfigRepository,
+    private val client: WebSocketClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -80,7 +80,7 @@ class PairingManager @Inject constructor(
             mode = payload.mode.uppercase(),
         )
         repository.save(pairing)
-        config.set("manual_disconnect", "false")
+        client.acceptReconnectRequest()
         return pairing
     }
 }

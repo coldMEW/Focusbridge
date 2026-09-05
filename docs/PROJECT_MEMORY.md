@@ -4,16 +4,41 @@ Last updated: 2026-09-05
 
 ## Product
 
+Budget constraint (2026-09-05): free-first for all infrastructure and tools;
+prefer ongoing free tiers to expiring trials. No paid resources or auto-charging
+trials without explicit approval. See `docs/free-relay-options.md` for the
+current free relay comparison and account setup steps. No relay is deployed.
+
 FocusBridge is a local-first attention filter. Android captures phone notifications, filters and prioritizes them, then sends them to a small Tauri desktop app for low-dopamine triage. The Rust relay is optional for later cloud/cross-network sync.
 
 ## Current State
 
 - `relay/` is committed and implements the Actix relay, registration, WebSocket routing, queue TTL, health, metrics, and tests.
-- `desktop/` is an active untracked scaffold with React, Tauri v2, SQLite schema, QR pairing, priority/study-mode helpers, event-driven UI state, and a local WebSocket receiver in progress.
+- `desktop/` is tracked and contains React, Tauri v2, SQLite, QR pairing, rules,
+  diagnostics, and a local pinned-WSS receiver. Older scaffold descriptions below
+  are historical, not current release certification.
 - `android/` now has its first implementation scaffold: pinned Gradle files, manifest, Hilt app, Room DB, repositories, notification pipeline, priority/study-mode helpers, protocol models, WebSocket client, foreground service, boot receiver, and a basic Compose debug/pairing UI.
 - `BUILD_DECISIONS.md` already records intentional Rust/Tauri version deviations from the original playbook.
 
 ## Most Recent Work
+
+- Follow-up review: `docs/network-review-followup-2026-09-05.md` tracks source
+  findings and device acceptance still required. Do not interpret historical
+  notes below as proof that all networking/security issues are resolved.
+- Android now invalidates failed/closing sessions, blocks manual-pause reconnects
+  before the DB write completes, and collects inventory asynchronously for each
+  authenticated connection. Metadata failures retain package identity; failed
+  scans do not send an empty replacement. QUERY_ALL_PACKAGES is preserved.
+- Desktop connection-state regression tests execute as integration tests despite
+  `[lib] test = false`. Replaced/revoked sockets cannot process later application
+  messages; a newly authenticated sender clears old heartbeat/auth diagnostics.
+- Inventory snapshots now reconcile visible apps transactionally while retaining
+  archived rules for reinstall. Queued notifications cannot repopulate excluded
+  apps. Snapshot completion resends rules; Android serializes rule updates in
+  received order. Desktop writes and close attempts now have deadlines.
+- Follow-up verification details are recorded in the follow-up review. Android
+  has 34 passing tests and a rebuilt debug APK; frontend has 26 passing tests
+  and TypeScript passes. No new production artifacts published.
 
 - September audit supersedes prior production-ready claims. See `docs/network-security-audit-2026-09-05.md` for verified fixes, open security blockers, and hosting setup. Public relay hosting is not configured; user has no server/domain yet. Relay privacy needs separate authentication capabilities and encryption secrets before deployment.
 - September patch fixes aggregate Android counts, missing ACK retries during connected sessions, cancellation handling, stale Android callbacks, pre-auth desktop message processing, empty auth keys, nonce-length panic, expired QR acceptance, and socket cleanup on errors. Local endpoints now require pinned WSS; both clients need updating. Legacy cloud mode is explicitly blocked pending the secure relay protocol.

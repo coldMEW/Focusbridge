@@ -34,6 +34,8 @@ android {
         buildConfig = true
     }
 
+    testOptions.unitTests.isReturnDefaultValues = true
+
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
     }

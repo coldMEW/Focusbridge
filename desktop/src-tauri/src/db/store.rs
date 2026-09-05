@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::Path;
 
 use super::models::{AppRuleRow, NotificationRow, PairedDeviceRow};
@@ -13,6 +14,7 @@ pub fn init(db_path: &Path) -> Result<()> {
     conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
         .context("apply desktop sqlite schema")?;
     ensure_app_rule_icon_column(&conn)?;
+    ensure_app_rule_inventory_column(&conn)?;
     Ok(())
 }
 
@@ -72,6 +74,7 @@ pub fn list_app_rules(db_path: &Path) -> Result<Vec<AppRuleRow>> {
         .prepare(
             "SELECT package_name, label, category, icon_data_url, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
              FROM app_rules
+             WHERE inventory_present = 1
              ORDER BY muted ASC, priority DESC, notifications_seen DESC, label COLLATE NOCASE ASC",
         )
         .context("prepare app rules list")?;
@@ -142,29 +145,70 @@ pub fn rules_update_envelope(db_path: &Path) -> Result<String> {
 }
 
 pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRuleRow>> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
-    if let Some(apps) = payload.get("apps").and_then(Value::as_array) {
-        for app in apps {
-            let package_name = string_field(app, "packageName", "");
-            if package_name.is_empty() {
-                continue;
+    let apps = payload
+        .get("apps")
+        .and_then(Value::as_array)
+        .context("app inventory must contain an apps array")?;
+    let mut packages = HashSet::new();
+    // Validate the entire snapshot before changing membership or metadata.
+    for app in apps {
+        let package = app
+            .get("packageName")
+            .and_then(Value::as_str)
+            .context("inventory app must have a string packageName")?;
+        anyhow::ensure!(
+            !package.is_empty() && !package.chars().any(|c| c.is_whitespace() || c.is_control()),
+            "invalid inventory packageName"
+        );
+        anyhow::ensure!(packages.insert(package), "duplicate inventory packageName");
+        for field in ["label", "category", "iconDataUrl"] {
+            if let Some(value) = app.get(field) {
+                anyhow::ensure!(
+                    value.is_string() || (field == "iconDataUrl" && value.is_null()),
+                    "invalid inventory {field}"
+                );
             }
-            let label = string_field(app, "label", &package_name);
-            let category = string_field(app, "category", &categorize_app(&package_name, &label));
-            let icon_data_url = string_field(app, "iconDataUrl", "");
-            let notifications_seen = app
-                .get("notificationsSeen")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let last_seen_at = app
-                .get("lastSeenAt")
-                .and_then(Value::as_i64)
-                .unwrap_or_else(now_millis);
-            conn.execute(
+        }
+        for field in ["notificationsSeen", "lastSeenAt"] {
+            if let Some(value) = app.get(field) {
+                anyhow::ensure!(
+                    value.as_i64().is_some_and(|number| number >= 0),
+                    "invalid inventory {field}"
+                );
+            }
+        }
+    }
+
+    let mut conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let tx = conn.transaction().context("begin app inventory snapshot")?;
+    // Keep absent rows as archived preferences, including across reinstalls.
+    tx.execute("UPDATE app_rules SET inventory_present = 0", [])
+        .context("reset app inventory membership")?;
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES ('app_inventory_received', '1')
+         ON CONFLICT(key) DO UPDATE SET value = '1'",
+        [],
+    )
+    .context("record authoritative app inventory")?;
+    for app in apps {
+        let package_name = string_field(app, "packageName", "");
+        let label = string_field(app, "label", &package_name);
+        let category = string_field(app, "category", &categorize_app(&package_name, &label));
+        let icon_data_url = string_field(app, "iconDataUrl", "");
+        let notifications_seen = app
+            .get("notificationsSeen")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let last_seen_at = app
+            .get("lastSeenAt")
+            .and_then(Value::as_i64)
+            .unwrap_or_else(now_millis);
+        tx.execute(
                 "INSERT INTO app_rules (
-                    package_name, label, category, icon_data_url, notifications_seen, last_seen_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    package_name, label, category, icon_data_url, notifications_seen, last_seen_at, updated_at, inventory_present
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)
                  ON CONFLICT(package_name) DO UPDATE SET
+                    inventory_present=1,
                     label=excluded.label,
                     category=excluded.category,
                     icon_data_url=CASE
@@ -184,8 +228,8 @@ pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRule
                 ],
             )
             .context("save app inventory row")?;
-        }
     }
+    tx.commit().context("commit app inventory snapshot")?;
     list_app_rules(db_path)
 }
 
@@ -467,8 +511,9 @@ fn upsert_app_seen(
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO app_rules (
-            package_name, label, category, notifications_seen, last_seen_at, updated_at
-         ) VALUES (?1, ?2, ?3, 1, ?4, ?5)
+            package_name, label, category, notifications_seen, last_seen_at, updated_at, inventory_present
+         ) VALUES (?1, ?2, ?3, 1, ?4, ?5,
+            NOT EXISTS (SELECT 1 FROM settings WHERE key = 'app_inventory_received'))
          ON CONFLICT(package_name) DO UPDATE SET
             label=excluded.label,
             category=excluded.category,
@@ -504,6 +549,22 @@ fn app_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AppRuleRow> {
         study_safe: row.get(8)?,
         updated_at: row.get(9)?,
     })
+}
+
+fn ensure_app_rule_inventory_column(conn: &Connection) -> Result<()> {
+    let columns = conn
+        .prepare("PRAGMA table_info(app_rules)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if !columns.iter().any(|name| name == "inventory_present") {
+        // Existing rules remain visible until the first authoritative snapshot.
+        conn.execute(
+            "ALTER TABLE app_rules ADD COLUMN inventory_present INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .context("add app inventory membership column")?;
+    }
+    Ok(())
 }
 
 fn ensure_app_rule_icon_column(conn: &Connection) -> Result<()> {

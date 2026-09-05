@@ -1,11 +1,12 @@
 use crate::db::store;
 use crate::desktop_notifications;
+use crate::server::socket_io::send_text;
 use crate::state::AppState;
 use anyhow::{Context, Result};
 use focusbridge_core::handler::{handle_envelope, IncomingDecision};
 use focusbridge_core::protocol::{Envelope, MessageType};
 use focusbridge_core::secure_envelope::{decrypt_payload, encrypt_envelope};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -70,7 +71,6 @@ async fn handle_connection(
             .await
             .context("WebSocket handshake timeout")?
             .context("accept secure websocket")?;
-        state.mark_transport("wss");
         handle_websocket(ws, peer, state, app).await
     } else {
         anyhow::bail!("plaintext pairing is disabled; update Android and scan a new QR")
@@ -96,6 +96,13 @@ where
       loop {
         let msg = tokio::select! {
             _ = stale_check.tick() => {
+                // Let a queued UNPAIR drain before closing a revoked session.
+                if active_pairing_key.is_some()
+                    && !state.is_current_phone_sender(&outbound_tx)
+                    && outbound_rx.is_empty()
+                {
+                    break;
+                }
                 if active_pairing_key.is_none() && now_ms() as i64 - last_phone_seen_at > 10_000 {
                     break;
                 }
@@ -112,7 +119,7 @@ where
                     Some(key) => encrypt_envelope(key, &outbound).context("encrypt outbound envelope")?,
                     None => outbound,
                 };
-                ws.send(tokio_tungstenite::tungstenite::Message::Text(body))
+                send_text(&mut ws, body)
                     .await
                     .context("send outbound websocket message")?;
                 continue;
@@ -124,6 +131,11 @@ where
                 inbound.context("read websocket message")?
             }
         };
+        if active_pairing_key.is_some() && !state.is_current_phone_sender(&outbound_tx) {
+            // An old socket may still receive data after replacement or manual pause.
+            // It must not mutate notifications, inventory, or current diagnostics.
+            continue;
+        }
         if !msg.is_text() {
             continue;
         }
@@ -133,11 +145,11 @@ where
             serde_json::from_str(&text).context("parse focusbridge envelope")?;
         // Application messages must never run before this socket authenticates.
         if active_pairing_key.is_none() && envelope.r#type != MessageType::Auth {
-            ws.close(None).await.ok();
+            timeout(Duration::from_secs(2), ws.close(None)).await.ok();
             break;
         }
         if active_pairing_key.is_some() && envelope.r#type == MessageType::Auth {
-            ws.close(None).await.ok();
+            timeout(Duration::from_secs(2), ws.close(None)).await.ok();
             break;
         }
         let expected_key = if let Some(key) = active_pairing_key.as_deref() {
@@ -160,6 +172,7 @@ where
                 active_pairing_key = Some(expected_key.clone());
                 last_phone_seen_at = now_ms() as i64;
                 state.set_phone_sender(outbound_tx.clone());
+                state.mark_transport("wss");
                 let qr_device_id = envelope
                     .payload
                     .get("deviceId")
@@ -189,16 +202,19 @@ where
                     &endpoint,
                     &cert_fingerprint,
                 )?;
-                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                send_text(&mut ws,
                     format!(
                         r#"{{"version":1,"type":"AUTH_OK","payload":{{"serverTime":{},"config":{{"heartbeatInterval":15000,"heartbeatTimeout":180000,"maxMessageSize":1048576}}}}}}"#,
                         now_ms()
                     ),
-                ))
+                )
                 .await
                 .context("send auth ok")?;
+                if !state.is_current_phone_sender(&outbound_tx) {
+                    continue;
+                }
                 if let Ok(message) = store::rules_update_envelope(&state.db_path) {
-                    let _ = state.send_to_phone(message);
+                    let _ = outbound_tx.send(message);
                 }
                 app.emit("focusbridge://connection", "CONNECTED")?;
                 if !notified_connected {
@@ -208,9 +224,9 @@ where
             }
             IncomingDecision::AuthFailed(reason) => {
                 warn!(peer = %peer, reason = %reason, "phone auth failed");
-                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                send_text(&mut ws,
                     r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
-                ))
+                )
                 .await
                 .ok();
                 break;
@@ -233,6 +249,10 @@ where
             IncomingDecision::StoreBatch(payload) => {
                 if let Some(items) = payload.get("notifications").and_then(|v| v.as_array()) {
                     for item in items {
+                        // ACK sends yield, so ownership can change between batch items.
+                        if !state.is_current_phone_sender(&outbound_tx) {
+                            break;
+                        }
                         let existed = item
                             .get("id")
                             .and_then(|value| value.as_str())
@@ -271,10 +291,12 @@ where
                     Some(key) => encrypt_envelope(key, &pong).context("encrypt pong envelope")?,
                     None => pong,
                 };
-                ws.send(tokio_tungstenite::tungstenite::Message::Text(body))
-                    .await
-                    .context("send pong")?;
-                app.emit("focusbridge://status", "PING")?;
+                send_text(&mut ws, body)
+                .await
+                .context("send pong")?;
+                if state.is_current_phone_sender(&outbound_tx) {
+                    app.emit("focusbridge://status", "PING")?;
+                }
             }
             IncomingDecision::StatusUpdate(payload) => {
                 app.emit("focusbridge://phone-status", payload)?;
@@ -282,12 +304,15 @@ where
             IncomingDecision::AppInventory(payload) => {
                 let rules = store::save_app_inventory(&state.db_path, &payload)?;
                 app.emit("focusbridge://app-rules", rules)?;
+                // AUTH preceded this snapshot; restored app preferences must reach Android too.
+                let rules_update = store::rules_update_envelope(&state.db_path)?;
+                let _ = outbound_tx.send(rules_update);
             }
             IncomingDecision::RulesAck(payload) => {
                 app.emit("focusbridge://rules-ack", payload)?;
             }
             IncomingDecision::ManualDisconnect => {
-                ws.close(None).await.ok();
+                timeout(Duration::from_secs(2), ws.close(None)).await.ok();
                 break;
             }
             IncomingDecision::Unknown => {}
@@ -375,8 +400,6 @@ where
         Some(key) => encrypt_envelope(key, &ack).context("encrypt notification ack envelope")?,
         None => ack,
     };
-    ws.send(tokio_tungstenite::tungstenite::Message::Text(body))
-        .await
-        .context("send notification ack")?;
+    send_text(ws, body).await.context("send notification ack")?;
     Ok(())
 }

@@ -65,6 +65,8 @@ impl AppState {
         self.update_diagnostics(|diag| {
             diag.connected = true;
             diag.connected_at = Some(now_ms_i64());
+            diag.last_heartbeat_at = None;
+            diag.last_auth_failure = None;
             diag.last_disconnect_reason = None;
         });
     }
@@ -74,6 +76,15 @@ impl AppState {
             .phone_sender
             .lock()
             .expect("phone sender lock poisoned") = None;
+    }
+
+    pub fn is_current_phone_sender(&self, sender: &UnboundedSender<String>) -> bool {
+        self.phone_sender
+            .lock()
+            .expect("phone sender lock poisoned")
+            .as_ref()
+            .map(|active| active.same_channel(sender))
+            .unwrap_or(false)
     }
 
     pub fn mark_manual_disconnect(&self) {

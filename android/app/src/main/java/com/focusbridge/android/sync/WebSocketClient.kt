@@ -19,6 +19,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,21 +58,31 @@ class WebSocketClient @Inject constructor(
     @Volatile private var secureTransport: Boolean = false
     @Volatile private var lastPongAt: Long = 0L
     private var heartbeatJob: Job? = null
+    private var sessionJob = SupervisorJob()
+    @Volatile private var manuallyDisconnected = false
+    private val preferenceMutex = Mutex()
+    private val rulesUpdateMutex = Mutex()
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
     private val _reconnectRequest = MutableStateFlow<DesktopReconnectRequest?>(null)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val state: StateFlow<ConnectionState> = _state
     val reconnectRequest: StateFlow<DesktopReconnectRequest?> = _reconnectRequest
 
+    @Synchronized
     fun isConnected(): Boolean = _state.value == ConnectionState.CONNECTED && socket != null
 
+    fun isManuallyDisconnected(): Boolean = manuallyDisconnected
+
+    @Synchronized
     fun connect(
         pairing: PairingEntity,
         deviceName: String = phoneIdentity.deviceName,
         endpointOverride: String? = null,
         retryingOnFailure: Boolean = false,
     ) {
+        if (manuallyDisconnected) return
         disconnect(showDisconnected = !retryingOnFailure)
+        sessionJob = SupervisorJob()
         val serial = ++connectionSerial
         activePairingKey = pairing.pairingKey
         secureReady = false
@@ -96,8 +110,8 @@ class WebSocketClient @Inject constructor(
         socket = client.newWebSocket(
             request,
             object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    if (serial != connectionSerial) { webSocket.cancel(); return }
+                override fun onOpen(webSocket: WebSocket, response: Response): Unit = synchronized(this@WebSocketClient) {
+                    if (serial != connectionSerial) { webSocket.cancel(); return@synchronized }
                     webSocket.send(
                         Protocol.auth(
                             pairingKey = pairing.pairingKey,
@@ -108,13 +122,13 @@ class WebSocketClient @Inject constructor(
                     )
                 }
 
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    if (serial != connectionSerial) return
-                    var envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return
+                override fun onMessage(webSocket: WebSocket, text: String): Unit = synchronized(this@WebSocketClient) {
+                    if (serial != connectionSerial) return@synchronized
+                    var envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return@synchronized
                     if (envelope.type == MessageType.ENCRYPTED) {
-                        val payload = envelope.payload as? JsonObject ?: return
-                        val decrypted = runCatching { SecureEnvelope.decrypt(pairing.pairingKey, payload) }.getOrNull() ?: return
-                        envelope = runCatching { Protocol.decodeEnvelope(decrypted) }.getOrNull() ?: return
+                        val payload = envelope.payload as? JsonObject ?: return@synchronized
+                        val decrypted = runCatching { SecureEnvelope.decrypt(pairing.pairingKey, payload) }.getOrNull() ?: return@synchronized
+                        envelope = runCatching { Protocol.decodeEnvelope(decrypted) }.getOrNull() ?: return@synchronized
                     }
                     when (envelope.type) {
                         MessageType.AUTH_OK -> {
@@ -122,9 +136,9 @@ class WebSocketClient @Inject constructor(
                             lastPongAt = System.currentTimeMillis()
                             updateState(serial, ConnectionState.CONNECTED)
                             startHeartbeat(webSocket, pairing.pairingKey, serial)
-                            webSocket.sendSecure(pairing.pairingKey, Protocol.appInventory(appInventoryProvider.launchableApps()))
+                            sendAppInventory(webSocket, pairing.pairingKey, serial)
                         }
-                        MessageType.AUTH_FAILED -> updateState(
+                        MessageType.AUTH_FAILED -> finishConnection(
                             serial,
                             if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
                         )
@@ -134,22 +148,27 @@ class WebSocketClient @Inject constructor(
                         MessageType.NOTIFICATION_ACK -> applyNotificationAck(envelope)
                         MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope, pairing.pairingKey)
                         MessageType.DESKTOP_ACTION -> applyDesktopAction(envelope)
-                        MessageType.UNPAIR -> applyManualDisconnect(webSocket, serial)
+                        MessageType.UNPAIR -> applyManualDisconnect(serial)
                         else -> Unit
                     }
                 }
 
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    finishConnection(
+                        serial,
+                        if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+                    )
+                }
+
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    stopHeartbeat(serial)
-                    updateState(
+                    finishConnection(
                         serial,
                         if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
                     )
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    stopHeartbeat(serial)
-                    updateState(
+                    finishConnection(
                         serial,
                         if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
                     )
@@ -158,19 +177,22 @@ class WebSocketClient @Inject constructor(
         )
     }
 
+    @Synchronized
     fun send(text: String): Boolean {
         if (!isConnected()) return false
         val key = activePairingKey
         val body = if (secureReady && key != null) SecureEnvelope.encrypt(key, text) else text
         val accepted = socket?.send(body) == true
         if (!accepted && _state.value == ConnectionState.CONNECTED) {
-            _state.value = ConnectionState.DISCONNECTED
+            disconnect()
         }
         return accepted
     }
 
+    @Synchronized
     fun disconnect(showDisconnected: Boolean = true) {
         connectionSerial += 1
+        sessionJob.cancel()
         socket?.close(1000, "FocusBridge disconnect")
         socket = null
         activePairingKey = null
@@ -182,7 +204,9 @@ class WebSocketClient @Inject constructor(
         }
     }
 
+    @Synchronized
     fun manualDisconnect() {
+        setManualDisconnect(true)
         val message = Protocol.disconnectRequest()
         val key = activePairingKey
         if (key != null) {
@@ -191,15 +215,19 @@ class WebSocketClient @Inject constructor(
             socket?.send(message)
         }
         disconnect(showDisconnected = true)
-        scope.launch {
-            config.set("manual_disconnect", "true")
-        }
     }
 
+    @Synchronized
     fun acceptReconnectRequest() {
-        scope.launch {
-            config.set("manual_disconnect", "false")
-            _reconnectRequest.value = null
+        setManualDisconnect(false)
+        _reconnectRequest.value = null
+    }
+
+    private fun setManualDisconnect(value: Boolean) {
+        manuallyDisconnected = value
+        // Enqueue writes in intent order, even if an earlier database write suspends.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            preferenceMutex.withLock { config.set("manual_disconnect", value.toString()) }
         }
     }
 
@@ -207,16 +235,39 @@ class WebSocketClient @Inject constructor(
         _reconnectRequest.value = null
     }
 
-    private fun applyManualDisconnect(webSocket: WebSocket, serial: Int) {
-        scope.launch {
-            config.set("manual_disconnect", "true")
-            webSocket.close(1000, "Desktop requested manual disconnect")
-            if (serial == connectionSerial) {
-                disconnect(showDisconnected = true)
+    private fun applyManualDisconnect(serial: Int) {
+        if (serial == connectionSerial) {
+            setManualDisconnect(true)
+            disconnect(showDisconnected = true)
+        }
+    }
+
+    @Synchronized
+    private fun finishConnection(serial: Int, state: ConnectionState) {
+        if (serial != connectionSerial) return
+        disconnect(showDisconnected = false)
+        _state.value = state
+    }
+
+    private fun sendAppInventory(webSocket: WebSocket, pairingKey: String, serial: Int) {
+        scope.launch(sessionJob) {
+            val apps = try {
+                appInventoryProvider.launchableApps()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                android.util.Log.w("FocusBridgeSync", "App inventory unavailable; keeping desktop inventory", failure)
+                return@launch
+            }
+            synchronized(this@WebSocketClient) {
+                if (serial == connectionSerial && isConnected()) {
+                    webSocket.sendSecure(pairingKey, Protocol.appInventory(apps))
+                }
             }
         }
     }
 
+    @Synchronized
     private fun updateState(serial: Int, state: ConnectionState) {
         if (serial == connectionSerial) {
             _state.value = state
@@ -228,16 +279,17 @@ class WebSocketClient @Inject constructor(
         heartbeatJob = scope.launch {
             while (serial == connectionSerial) {
                 delay(HEARTBEAT_INTERVAL_MS)
-                if (serial != connectionSerial || _state.value != ConnectionState.CONNECTED) {
-                    continue
+                synchronized(this@WebSocketClient) {
+                    if (serial != connectionSerial || _state.value != ConnectionState.CONNECTED) {
+                        return@launch
+                    }
+                    val age = System.currentTimeMillis() - lastPongAt
+                    if (age > HEARTBEAT_TIMEOUT_MS) {
+                        finishConnection(serial, ConnectionState.DISCONNECTED)
+                        return@launch
+                    }
+                    webSocket.sendSecure(pairingKey, Protocol.ping())
                 }
-                val age = System.currentTimeMillis() - lastPongAt
-                if (age > HEARTBEAT_TIMEOUT_MS) {
-                    webSocket.close(1001, "FocusBridge heartbeat timeout")
-                    updateState(serial, ConnectionState.DISCONNECTED)
-                    break
-                }
-                webSocket.sendSecure(pairingKey, Protocol.ping())
             }
         }
     }
@@ -250,28 +302,31 @@ class WebSocketClient @Inject constructor(
     }
 
     private fun applyRulesUpdate(webSocket: WebSocket, envelope: Envelope, pairingKey: String) {
-        scope.launch {
-            val update = Protocol.decodeRulesUpdate(envelope.payload)
-            appRules.replaceFromDesktop(
-                update.appRules.map { rule ->
-                    AppRuleEntity(
-                        packageName = rule.packageName,
-                        muted = rule.muted,
-                        priority = rule.priority,
-                        studySafe = rule.studySafe,
-                        updatedAt = System.currentTimeMillis(),
-                    )
-                },
-            )
-            config.set("priority_keywords", update.priorityKeywords.joinToString(","))
-            config.set("blocked_keywords", update.blockedKeywords.joinToString(","))
-            config.set("favorite_contacts", update.favoriteContacts.joinToString(","))
-            webSocket.send(SecureEnvelope.encrypt(pairingKey, Protocol.rulesAck(update.appRules.size)))
+        // Enter the mutex queue in receive order, not IO dispatcher scheduling order.
+        scope.launch(sessionJob, start = CoroutineStart.UNDISPATCHED) {
+            rulesUpdateMutex.withLock {
+                val update = Protocol.decodeRulesUpdate(envelope.payload)
+                appRules.replaceFromDesktop(
+                    update.appRules.map { rule ->
+                        AppRuleEntity(
+                            packageName = rule.packageName,
+                            muted = rule.muted,
+                            priority = rule.priority,
+                            studySafe = rule.studySafe,
+                            updatedAt = System.currentTimeMillis(),
+                        )
+                    },
+                )
+                config.set("priority_keywords", update.priorityKeywords.joinToString(","))
+                config.set("blocked_keywords", update.blockedKeywords.joinToString(","))
+                config.set("favorite_contacts", update.favoriteContacts.joinToString(","))
+                webSocket.send(SecureEnvelope.encrypt(pairingKey, Protocol.rulesAck(update.appRules.size)))
+            }
         }
     }
 
     private fun applyNotificationAck(envelope: Envelope) {
-        scope.launch {
+        scope.launch(sessionJob) {
             val ack = Protocol.decodeNotificationAck(envelope.payload)
             if (ack.accepted) {
                 notifications.markSent(ack.id)
@@ -280,7 +335,7 @@ class WebSocketClient @Inject constructor(
     }
 
     private fun applyDesktopAction(envelope: Envelope) {
-        scope.launch {
+        scope.launch(sessionJob) {
             val action = Protocol.decodeDesktopAction(envelope.payload)
             if (action.action == "reconnect_request") {
                 val request = DesktopReconnectRequest(action.deviceId, action.requestedAt)

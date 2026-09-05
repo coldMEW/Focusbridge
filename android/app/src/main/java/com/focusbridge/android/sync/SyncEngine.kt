@@ -57,6 +57,7 @@ class SyncEngine @Inject constructor(
             if (isManuallyDisconnected()) return@withLock
             val pairing = pairings.active() ?: return@withLock
             for (endpoint in pairing.candidateEndpoints()) {
+                if (isManuallyDisconnected()) return@withLock
                 client.connect(
                     pairing,
                     deviceName = DeviceInfo.deviceName,
@@ -93,7 +94,7 @@ class SyncEngine @Inject constructor(
     }
 
     private suspend fun isManuallyDisconnected(): Boolean =
-        config.get("manual_disconnect") == "true"
+        client.isManuallyDisconnected() || config.get("manual_disconnect") == "true"
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 4_000L

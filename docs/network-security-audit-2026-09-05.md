@@ -52,19 +52,9 @@ No design guarantees access on networks that block the relay or all Internet.
 
 ## Hosting from scratch
 
-Render is a candidate because it provides managed HTTPS, WebSockets, Docker
-deployment, and an onrender.com hostname. A purchased domain is optional.
-
-1. Create a Render account at https://dashboard.render.com and connect GitHub.
-2. Grant access only to coldMEW/Focusbridge.
-3. Check https://render.com/pricing for an always-on web service and durable
-   storage budget. Do not create/pay for a service until deployment is ready.
-4. Provide the intended region and confirmation that the account is ready.
-   Do not send passwords, payment details, service-account keys, or private keys.
-5. After relay hardening, deploy the reviewed configuration and supply its public
-   HTTPS hostname. Credentials belong in the provider's secret settings.
-6. Verify health, role authorization, wrong-key rejection, restart recovery,
-   two-network delivery, and that server logs contain no private content.
+See `free-relay-options.md` for free-tier comparisons and account setup from
+scratch. The user requires free-first infrastructure. The initial paid Render
+suggestion is superseded; no service has been deployed or purchased.
 
 Deployment files and a live deployment are not provided by this checkpoint.
 Do not expose the existing relay as a production service yet.
