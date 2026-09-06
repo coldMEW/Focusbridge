@@ -209,4 +209,40 @@ class SyncEngineTest {
             job.cancelAndJoin()
         }
     }
+
+    @Test fun aDisconnectedPhoneStaysReachableSoThePcCanAskItBack() = runBlocking {
+        coEvery { config.get("manual_disconnect") } returns "true"
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            // A PC on another network cannot dial this phone, so leaving the relay
+            // on disconnect made "reconnect this phone" impossible to deliver.
+            verify(atLeast = 1) {
+                client.connect(relayPairing, any(), any(), any(), useRelay = true, requireApproval = true)
+            }
+            // And it must not have opened a data path while disconnected.
+            verify(exactly = 0) {
+                client.connect(any(), any(), any(), any(), useRelay = any(), requireApproval = false)
+            }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun aDisconnectedPhoneWithNoRelayStaysOffTheNetwork() = runBlocking {
+        coEvery { config.get("manual_disconnect") } returns "true"
+        coEvery { pairings.active() } returns pairing
+        failEveryAttempt()
+
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            // Without relay credentials there is no way to be asked, so a LAN-only
+            // pairing must not start dialing behind a manual disconnect.
+            verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
 }

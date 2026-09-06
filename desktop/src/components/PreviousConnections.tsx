@@ -47,8 +47,9 @@ export default function PreviousConnections() {
     const summary = summarizePairedDevice(device, state);
     setMessage(`Checking ${summary.name}...`);
     try {
-      await invoke("request_device_reconnect", { deviceId: device.deviceId });
-      setMessage("Reconnect request sent. Accept it on your phone to resume sync.");
+      // The backend reports what it actually did: it either reached a live
+      // socket, or joined the relay to wait for a phone on another network.
+      setMessage(await invoke<string>("request_device_reconnect", { deviceId: device.deviceId }));
       refreshDevices();
     } catch (error) {
       setMessage(String(error));

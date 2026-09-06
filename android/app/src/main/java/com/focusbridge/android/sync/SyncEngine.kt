@@ -29,7 +29,11 @@ class SyncEngine @Inject constructor(
         while (currentCoroutineContext().isActive) {
             try {
                 if (isManuallyDisconnected()) {
-                    // Nothing to do until the user pairs or accepts a reconnect.
+                    // Disconnected means "send me nothing", not "become
+                    // unreachable". Staying at the relay is the only way a PC on
+                    // another network can ask to reconnect, since it cannot dial
+                    // this phone. No data moves until the user accepts.
+                    if (!client.isAwaitingPeer()) stayReachable()
                 } else if (client.isConnected()) {
                     flushPending()
                 } else if (!client.isAwaitingPeer()) {
@@ -44,6 +48,28 @@ class SyncEngine @Inject constructor(
                 client.disconnect(showDisconnected = true)
             }
             delay(RECONNECT_INTERVAL_MS)
+        }
+    }
+
+    /**
+     * Joins the relay purely so this phone can be asked to reconnect.
+     *
+     * Nothing is decrypted and nothing is sent: the session is not started until
+     * the user accepts the prompt. This is what makes "reconnect this phone"
+     * work from the PC while the two are on different networks.
+     */
+    private suspend fun stayReachable() {
+        connectMutex.withLock {
+            if (client.isConnected() || client.isAwaitingPeer()) return@withLock
+            val pairing = pairings.active() ?: return@withLock
+            if (!pairing.supportsRelay()) return@withLock
+            client.connect(
+                pairing,
+                deviceName = DeviceInfo.deviceName,
+                retryingOnFailure = true,
+                useRelay = true,
+                requireApproval = true,
+            )
         }
     }
 

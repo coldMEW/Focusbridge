@@ -76,13 +76,16 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
       {error && <p className="mt-4 text-sm text-[#9b4b3d]">Pairing error: {error}</p>}
       {qr ? (
         <div className="mt-5 grid min-w-0 gap-4">
-          <div className="mx-auto max-w-full rounded-[28px] border border-border-subtle bg-white p-3 shadow-soft">
+          <div className="mx-auto w-fit max-w-full rounded-[28px] border border-border-subtle bg-white p-3 shadow-soft">
+            {/* Square at every width: fixing both dimensions and then capping the
+                width stretched the code into a rectangle in the narrow panel, and
+                a distorted QR does not scan. Nearest-neighbour scaling keeps the
+                module edges hard, which is what a camera needs to resolve them. */}
             <img
               src={`data:image/png;base64,${qr.pngBase64}`}
               alt="Pairing QR"
-              // Sized so each QR module lands on at least three screen pixels;
-            // below that a phone camera cannot resolve this code at arm's length.
-            className={compact ? "h-56 w-56 max-w-full" : "h-96 w-96 max-w-full"}
+              style={{ imageRendering: "pixelated" }}
+              className={`aspect-square h-auto w-full ${compact ? "max-w-[224px]" : "max-w-[360px]"}`}
             />
           </div>
           <button
@@ -102,7 +105,11 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
           </div>
         </div>
       ) : (
-        <div className="mx-auto mt-5 h-96 w-96 max-w-full animate-pulse rounded-[28px] border border-border-subtle bg-bg-secondary" />
+        <div
+          className={`mx-auto mt-5 aspect-square w-full animate-pulse rounded-[28px] border border-border-subtle bg-bg-secondary ${
+            compact ? "max-w-[224px]" : "max-w-[360px]"
+          }`}
+        />
       )}
       <p className="mt-4 text-xs text-text-muted">
         {minutes === null ? "Generating secure local payload..." : `Expires in ${minutes} min`}

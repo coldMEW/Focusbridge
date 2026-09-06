@@ -129,7 +129,10 @@ class WebSocketClient @Inject constructor(
         useRelay: Boolean = false,
         requireApproval: Boolean = false,
     ) {
-        if (manuallyDisconnected) return
+        // A connection that has to be approved carries no data until it is, so it
+        // is allowed while disconnected: that is how the PC reaches this phone to
+        // ask in the first place.
+        if (manuallyDisconnected && !requireApproval) return
         disconnect(showDisconnected = !retryingOnFailure)
         sessionJob = SupervisorJob()
         val serial = ++connectionSerial

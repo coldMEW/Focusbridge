@@ -278,7 +278,7 @@ pub fn disconnect_phone(
 pub fn request_device_reconnect(
     device_id: String,
     state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let message = serde_json::to_string(&json!({
         "version": 1,
         "type": "DESKTOP_ACTION",
@@ -291,7 +291,7 @@ pub fn request_device_reconnect(
     .map_err(|e| e.to_string())?;
 
     if state.send_to_phone(message) {
-        return Ok(());
+        return Ok("Asked your phone to reconnect.".into());
     }
     // No live socket to ask. If cross-network sync is set up, join the relay and
     // wait there instead: the phone cannot be dialed directly on another
@@ -301,9 +301,7 @@ pub fn request_device_reconnect(
         .is_some()
     {
         state.request_relay_connection();
-        return Err(
-            "Waiting for your phone. Open FocusBridge on it and accept the connection.".into(),
-        );
+        return Ok("Waiting for your phone to accept. It can be on any network.".into());
     }
     Err("Phone is offline. Open FocusBridge on Android, then scan the QR or paste the manual payload.".into())
 }
