@@ -109,13 +109,19 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
                         break;
                     };
                     // One phone session at a time; a new generation always restarts.
-                    // A failed session does not tear down the relay socket, so the
-                    // phone's next attempt is answered without a reconnect delay.
                     if let Err(error) =
                         run_session(state, &mut socket, &identity, &secrets, &pair, local_port)
                             .await
                     {
                         warn!(error = %error, "relay phone session ended");
+                        // Reconnect rather than waiting here. The relay announces a
+                        // peer only when one joins, so a socket that outlives its
+                        // session would sit waiting for an event that cannot arrive
+                        // until the phone happens to reconnect first. Rejoining
+                        // makes the relay announce this desktop to a phone that is
+                        // still present, so recovery does not depend on the phone
+                        // noticing that the session died.
+                        break;
                     }
                 }
                 Some("relay.peer_unavailable") => continue,
