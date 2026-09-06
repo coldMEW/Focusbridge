@@ -211,6 +211,7 @@ class SyncEngineTest {
     }
 
     @Test fun aDisconnectedPhoneStaysReachableSoThePcCanAskItBack() = runBlocking {
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
         coEvery { config.get("manual_disconnect") } returns "true"
         coEvery { pairings.active() } returns relayPairing
         failEveryAttempt()
@@ -232,6 +233,7 @@ class SyncEngineTest {
     }
 
     @Test fun aDisconnectedPhoneWithNoRelayStaysOffTheNetwork() = runBlocking {
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
         coEvery { config.get("manual_disconnect") } returns "true"
         coEvery { pairings.active() } returns pairing
         failEveryAttempt()
@@ -241,6 +243,27 @@ class SyncEngineTest {
             // Without relay credentials there is no way to be asked, so a LAN-only
             // pairing must not start dialing behind a manual disconnect.
             verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun autoReconnectOnNeverAsksEvenAfterAManualDisconnect() = runBlocking {
+        // The reported bug: the switch was on and every reconnection still asked,
+        // because an old manual disconnect kept forcing the approval path.
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
+        coEvery { config.get("manual_disconnect") } returns "true"
+        every { client.isManuallyDisconnected() } returns true
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            // The switch wins: the manual disconnect is lifted rather than obeyed.
+            verify(atLeast = 1) { client.acceptReconnectRequest() }
+            verify(exactly = 0) {
+                client.connect(any(), any(), any(), any(), any(), requireApproval = true)
+            }
         } finally {
             job.cancelAndJoin()
         }

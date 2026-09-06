@@ -28,17 +28,16 @@ class SyncEngine @Inject constructor(
     suspend fun maintainActivePairing() {
         while (currentCoroutineContext().isActive) {
             try {
-                if (isManuallyDisconnected()) {
-                    // Disconnected means "send me nothing", not "become
-                    // unreachable". Staying at the relay is the only way a PC on
-                    // another network can ask to reconnect, since it cannot dial
-                    // this phone. No data moves until the user accepts.
-                    if (!client.isAwaitingPeer()) stayReachable()
-                } else if (client.isConnected()) {
+                // The switch is the only thing that decides whether this phone may
+                // be reconnected without being asked. An earlier manual disconnect
+                // must not keep asking forever once the user has turned automatic
+                // reconnection back on.
+                if (autoReconnectEnabled() && isManuallyDisconnected()) {
+                    client.acceptReconnectRequest()
+                }
+                if (client.isConnected()) {
                     flushPending()
                 } else if (!client.isAwaitingPeer()) {
-                    // Always reachable, even with automatic reconnection off: the
-                    // relay leg below asks for approval instead of connecting.
                     connectActivePairing()
                 }
             } catch (cancelled: CancellationException) {
@@ -48,28 +47,6 @@ class SyncEngine @Inject constructor(
                 client.disconnect(showDisconnected = true)
             }
             delay(RECONNECT_INTERVAL_MS)
-        }
-    }
-
-    /**
-     * Joins the relay purely so this phone can be asked to reconnect.
-     *
-     * Nothing is decrypted and nothing is sent: the session is not started until
-     * the user accepts the prompt. This is what makes "reconnect this phone"
-     * work from the PC while the two are on different networks.
-     */
-    private suspend fun stayReachable() {
-        connectMutex.withLock {
-            if (client.isConnected() || client.isAwaitingPeer()) return@withLock
-            val pairing = pairings.active() ?: return@withLock
-            if (!pairing.supportsRelay()) return@withLock
-            client.connect(
-                pairing,
-                deviceName = DeviceInfo.deviceName,
-                retryingOnFailure = true,
-                useRelay = true,
-                requireApproval = true,
-            )
         }
     }
 
@@ -84,48 +61,47 @@ class SyncEngine @Inject constructor(
                 connectedNow = true
                 return@withLock
             }
-            if (isManuallyDisconnected()) return@withLock
             val pairing = pairings.active() ?: return@withLock
-            // The LAN path is preferred: it works with no Internet account, adds no
-            // relay hop, and keeps working if the relay is unreachable.
             val automatic = autoReconnectEnabled()
-            for (endpoint in pairing.candidateEndpoints()) {
-                // A local address can only be reached by dialing it, so there is no
-                // way to ask first; that path stays opt-in through this switch.
-                if (!automatic) break
-                if (isManuallyDisconnected()) return@withLock
-                client.connect(
-                    pairing,
-                    deviceName = DeviceInfo.deviceName,
-                    endpointOverride = endpoint,
-                    retryingOnFailure = true,
-                )
-                if (awaitConnected(CONNECT_TIMEOUT_MS)) {
-                    connectedNow = true
-                    return@withLock
+            val quiet = isManuallyDisconnected()
+
+            // The local path is preferred: no account, no relay hop, and it keeps
+            // working with no Internet at all. It is only usable when this phone
+            // may connect without asking, because dialing an address is the only
+            // way to reach it and there is no moment at which to prompt.
+            if (automatic && !quiet) {
+                for (endpoint in pairing.candidateEndpoints()) {
+                    if (isManuallyDisconnected()) return@withLock
+                    client.connect(
+                        pairing,
+                        deviceName = DeviceInfo.deviceName,
+                        endpointOverride = endpoint,
+                        retryingOnFailure = true,
+                    )
+                    if (awaitConnected(CONNECT_TIMEOUT_MS)) {
+                        connectedNow = true
+                        return@withLock
+                    }
                 }
             }
-            // No LAN route reached the desktop, so fall back to the relay. This is
-            // the path that crosses networks: mobile data to a PC on home Wi-Fi,
-            // isolated guest networks, and NAT in both directions.
-            if (!isManuallyDisconnected() && pairing.supportsRelay()) {
-                // With automatic reconnection off this phone still joins the relay,
-                // so a PC can reach it from any network, but it asks before letting
-                // that PC in rather than attaching to whichever one is waiting.
-                val approve = !autoReconnectEnabled()
+
+            // The relay crosses networks, and is also the only way a PC can ask
+            // for this phone at all, so it is joined even while disconnected. It
+            // asks first exactly when automatic reconnection is off.
+            if (pairing.supportsRelay()) {
                 client.connect(
                     pairing,
                     deviceName = DeviceInfo.deviceName,
                     retryingOnFailure = true,
                     useRelay = true,
-                    requireApproval = approve,
+                    requireApproval = !automatic,
                 )
                 if (awaitConnected(RELAY_CONNECT_TIMEOUT_MS)) {
                     connectedNow = true
                     return@withLock
                 }
-                // Hold an attached relay socket open even though the desktop has not
-                // answered: the relay reports the peer's arrival on this same socket.
+                // Hold an attached relay socket open even though the desktop has
+                // not answered: the relay reports its arrival on this same socket.
                 if (client.isAwaitingPeer()) return@withLock
             }
             client.disconnect(showDisconnected = true)
