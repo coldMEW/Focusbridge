@@ -1,0 +1,24 @@
+[package]
+name = "focusbridge-secure-channel-jni"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[workspace]
+
+[dependencies]
+focusbridge-secure-channel = { path = "../secure-channel" }
+jni = { version = "=0.21.1", default-features = false }
+zeroize = "1.8"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
