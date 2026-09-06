@@ -80,7 +80,9 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
             <img
               src={`data:image/png;base64,${qr.pngBase64}`}
               alt="Pairing QR"
-              className={compact ? "h-40 w-40 max-w-full" : "h-56 w-56 max-w-full"}
+              // Sized so each QR module lands on at least three screen pixels;
+            // below that a phone camera cannot resolve this code at arm's length.
+            className={compact ? "h-56 w-56 max-w-full" : "h-96 w-96 max-w-full"}
             />
           </div>
           <button
@@ -100,7 +102,7 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
           </div>
         </div>
       ) : (
-        <div className="mx-auto mt-5 h-56 w-56 animate-pulse rounded-[28px] border border-border-subtle bg-bg-secondary" />
+        <div className="mx-auto mt-5 h-96 w-96 max-w-full animate-pulse rounded-[28px] border border-border-subtle bg-bg-secondary" />
       )}
       <p className="mt-4 text-xs text-text-muted">
         {minutes === null ? "Generating secure local payload..." : `Expires in ${minutes} min`}

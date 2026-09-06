@@ -68,7 +68,10 @@ pub fn make_qr(payload: &QrPayload, expires_at: i64) -> Result<QrOutput> {
     let json = serde_json::to_string(payload)?;
     let deep_link = format!("focusbridge://pair?payload={}", percent_encode(&json));
     let code = QrCode::new(deep_link.as_bytes())?;
-    let img = code.render::<Luma<u8>>().min_dimensions(256, 256).build();
+    // The version 2 payload needs roughly 117 modules a side. Rendering small and
+    // letting the UI scale it up loses the module edges a scanner needs, so this
+    // is generated well above its display size.
+    let img = code.render::<Luma<u8>>().min_dimensions(768, 768).build();
     let (w, h) = (img.width(), img.height());
     let buf: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::from_raw(w, h, img.into_raw()).unwrap();
     let mut png_bytes: Vec<u8> = Vec::new();

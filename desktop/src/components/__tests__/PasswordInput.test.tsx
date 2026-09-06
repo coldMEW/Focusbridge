@@ -204,19 +204,16 @@ describe("PasswordInput in AuthGate", () => {
     expect(await screen.findByLabelText("PIN or password")).toHaveAttribute("type", "password");
   });
 
-  it("keeps Advanced relay auth and reveals only its password without requesting a code", async () => {
+  it("no longer offers the legacy self-hosted relay sign-in", async () => {
     render(<AuthGate>Dashboard</AuthGate>);
     await screen.findByRole("heading", { name: "Account login" });
-    const summary = screen.getByText("Advanced relay auth");
-    fireEvent.click(summary);
-    expect(summary.closest("details")).toHaveAttribute("open");
-    expectPasswordToggle("Relay password", "Relay password", "current-password");
+    // That panel posted to a hard-coded http://127.0.0.1:8443 that is not
+    // deployed and is not what cross-network sync uses, so every control in it
+    // failed. Account sign-in is Firebase only.
+    expect(screen.queryByText("Advanced relay auth")).toBeNull();
+    expect(screen.queryByLabelText("Relay password")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send email code" })).toBeNull();
     expect(screen.getByLabelText("Account password")).toHaveAttribute("type", "password");
     expect(invoke).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Send email code" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("auth_relay_otp_start", {
-      relayUrl: "http://127.0.0.1:8443", email: "", password: "test-secret-123",
-    }));
-    await screen.findByRole("button", { name: "Verify code" });
   });
 });

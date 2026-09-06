@@ -17,15 +17,9 @@ import {
 
 interface AuthStatus {
   configured: boolean;
-  relayEmail?: string | null;
   lockTimeoutMinutes: number;
   recoveryConfigured: boolean;
   recoveryQuestion?: string | null;
-}
-
-interface GoogleSignInResult {
-  email: string;
-  userId: string;
 }
 
 type AccountMode = "login" | "signup" | "guest";
@@ -42,8 +36,6 @@ const SECURITY_QUESTIONS = [
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [configured, setConfigured] = useState<boolean | null>(null);
-  const [relayEmail, setRelayEmail] = useState<string | null>(null);
-  const [relayUrl, setRelayUrl] = useState("http://127.0.0.1:8443");
   const [accountSession, setAccountSession] = useState<AccountSession | null>(null);
   const [accountMode, setAccountMode] = useState<AccountMode>("login");
   const [lockMode, setLockMode] = useState<LockMode>("unlock");
@@ -56,11 +48,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState("");
   const [firebasePassword, setFirebasePassword] = useState("");
   const [firebaseBusy, setFirebaseBusy] = useState(false);
-  const [relayPassword, setRelayPassword] = useState("");
-  const [relayOtp, setRelayOtp] = useState("");
-  const [relayOtpSent, setRelayOtpSent] = useState(false);
-  const [relayBusy, setRelayBusy] = useState(false);
-  const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lockTimeoutMinutes, setLockTimeoutMinutes] = useState(0);
@@ -70,9 +57,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     const session = readAccountSession(window.localStorage);
     if (session) {
       setAccountSession(session);
-      if (session.mode === "firebase") {
-        setRelayEmail(session.email);
-      }
     } else {
       clearAccountSession(window.localStorage);
     }
@@ -80,7 +64,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     invoke<AuthStatus>("auth_status")
       .then((status) => {
         setConfigured(status.configured);
-        setRelayEmail((current) => current ?? status.relayEmail ?? null);
         setLockTimeoutMinutes(status.lockTimeoutMinutes ?? 0);
         setRecoveryQuestion(status.recoveryQuestion ?? null);
         setLockMode(status.configured ? "unlock" : "setup");
@@ -154,7 +137,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         uid: result.uid,
         lastLoginAt: Date.now(),
       };
-      setRelayEmail(result.email);
       setFirebasePassword("");
       acceptAccountSession(session);
     } catch (err) {
@@ -225,63 +207,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signInWithGoogle = async () => {
-    setError(null);
-    setGoogleBusy(true);
-    try {
-      const result = await invoke<GoogleSignInResult>("auth_google_sign_in", { relayUrl });
-      setRelayEmail(result.email);
-      acceptAccountSession({
-        mode: "firebase",
-        email: result.email,
-        uid: result.userId,
-        lastLoginAt: Date.now(),
-      });
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setGoogleBusy(false);
-    }
-  };
 
-  const requestRelayOtp = async () => {
-    setError(null);
-    setRelayBusy(true);
-    try {
-      await invoke("auth_relay_otp_start", { relayUrl, email, password: relayPassword });
-      setRelayOtpSent(true);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setRelayBusy(false);
-    }
-  };
 
-  const verifyRelayOtp = async () => {
-    setError(null);
-    setRelayBusy(true);
-    try {
-      const result = await invoke<GoogleSignInResult>("auth_relay_otp_verify", {
-        relayUrl,
-        email,
-        password: relayPassword,
-        otp: relayOtp,
-      });
-      setRelayEmail(result.email);
-      setRelayOtp("");
-      setRelayOtpSent(false);
-      acceptAccountSession({
-        mode: "firebase",
-        email: result.email,
-        uid: result.userId,
-        lastLoginAt: Date.now(),
-      });
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setRelayBusy(false);
-    }
-  };
 
   if (configured === null) {
     return <div className="grid min-h-screen place-items-center bg-bg-primary text-text-muted">Loading security...</div>;
@@ -329,19 +256,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
               submitFirebaseAccount={submitFirebaseAccount}
               sendPasswordReset={sendPasswordReset}
               continueAsGuest={continueAsGuest}
-              relayUrl={relayUrl}
-              setRelayUrl={setRelayUrl}
-              relayPassword={relayPassword}
-              setRelayPassword={setRelayPassword}
-              relayOtp={relayOtp}
-              setRelayOtp={setRelayOtp}
-              relayOtpSent={relayOtpSent}
-              relayBusy={relayBusy}
-              requestRelayOtp={requestRelayOtp}
-              verifyRelayOtp={verifyRelayOtp}
-              googleBusy={googleBusy}
-              signInWithGoogle={signInWithGoogle}
-              relayEmail={relayEmail}
             />
           ) : (
             <LocalLockPanel
@@ -388,19 +302,6 @@ function AccountPanel(props: {
   submitFirebaseAccount: () => Promise<void>;
   sendPasswordReset: () => Promise<void>;
   continueAsGuest: () => void;
-  relayUrl: string;
-  setRelayUrl: (value: string) => void;
-  relayPassword: string;
-  setRelayPassword: (value: string) => void;
-  relayOtp: string;
-  setRelayOtp: (value: string) => void;
-  relayOtpSent: boolean;
-  relayBusy: boolean;
-  requestRelayOtp: () => Promise<void>;
-  verifyRelayOtp: () => Promise<void>;
-  googleBusy: boolean;
-  signInWithGoogle: () => Promise<void>;
-  relayEmail: string | null;
 }) {
   return (
     <div className="animate-rise-in">
@@ -463,18 +364,6 @@ function AccountPanel(props: {
         </div>
       )}
 
-      <details className="mt-5 rounded-3xl border border-border-subtle bg-bg-primary/60 p-4">
-        <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.2em] text-text-muted">Advanced relay auth</summary>
-        <input value={props.relayUrl} onChange={(event) => props.setRelayUrl(event.target.value)} className="auth-input mt-3" placeholder="http://127.0.0.1:8443" />
-        <PasswordInput label="Relay password" value={props.relayPassword} onChange={(event) => props.setRelayPassword(event.target.value)} autoComplete="current-password" className="auth-input" wrapperClassName="mt-3" placeholder="Relay password" />
-        {props.relayOtpSent && <input value={props.relayOtp} onChange={(event) => props.setRelayOtp(event.target.value)} className="auth-input mt-3" placeholder="6-digit email code" />}
-        <button onClick={() => void (props.relayOtpSent ? props.verifyRelayOtp() : props.requestRelayOtp())} disabled={props.relayBusy} className="mt-3 w-full rounded-full bg-text-primary px-5 py-3 text-sm font-bold text-bg-primary transition hover:bg-accent-study disabled:opacity-60">
-          {props.relayBusy ? "Checking email..." : props.relayOtpSent ? "Verify code" : "Send email code"}
-        </button>
-        <button onClick={() => void props.signInWithGoogle()} disabled={props.googleBusy} className="mt-3 w-full rounded-full border border-border-subtle bg-bg-primary px-5 py-3 text-sm font-bold text-text-primary transition hover:-translate-y-0.5 hover:border-border-hover disabled:opacity-60">
-          {props.googleBusy ? "Waiting for Google..." : props.relayEmail ? "Reconnect Google account" : "Continue with Google"}
-        </button>
-      </details>
     </div>
   );
 }

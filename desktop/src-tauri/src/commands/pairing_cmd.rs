@@ -7,7 +7,6 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use focusbridge_core::qr::{QrNoise, QrRelay};
 use rand::RngCore;
 use serde_json::json;
-use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,22 +83,37 @@ fn command_ipv4_candidates() -> Vec<Ipv4Addr> {
         .collect()
 }
 
+/// LAN addresses a phone should try, best first.
+///
+/// The address the operating system actually routes through leads, because the
+/// machine usually also has virtual adapters - Hyper-V, WSL, VirtualBox - whose
+/// addresses no phone can reach. Sorting these numerically used to put a
+/// 172.x virtual switch ahead of the real 192.168.x address, so every pairing
+/// began by waiting out a ten-second connect timeout to a dead endpoint.
 pub(crate) fn local_ipv4_candidates() -> Vec<String> {
-    let mut candidates = BTreeSet::new();
+    let mut candidates: Vec<String> = Vec::new();
+    let mut push = |ip: Ipv4Addr| {
+        let candidate = format!("wss://{ip}:9173");
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    };
 
     if let Some(ip) = route_ipv4() {
-        candidates.insert(format!("wss://{ip}:9173"));
+        push(ip);
     }
-
-    for ip in command_ipv4_candidates() {
-        candidates.insert(format!("wss://{ip}:9173"));
+    // Remaining adapters are still offered, in a stable order, because the
+    // routed address is wrong when the phone is on a hotspot this PC serves.
+    let mut others = command_ipv4_candidates();
+    others.sort();
+    for ip in others {
+        push(ip);
     }
 
     if candidates.is_empty() {
-        candidates.insert("wss://127.0.0.1:9173".to_string());
+        candidates.push("wss://127.0.0.1:9173".to_string());
     }
-
-    candidates.into_iter().collect()
+    candidates
 }
 
 #[tauri::command]

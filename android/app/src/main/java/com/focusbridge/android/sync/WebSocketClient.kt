@@ -47,6 +47,24 @@ data class DesktopReconnectRequest(
     val requestedAt: Long,
 )
 
+    /**
+ * Unwraps the pairing-key envelope the desktop wraps outbound traffic in once
+ * a socket is authenticated.
+ *
+ * Both transports need this. The desktop sends AUTH_OK in the clear and
+ * encrypts everything after it, so a path that skipped this step would
+ * authenticate correctly and then silently discard every reply - including
+ * the PONG the phone's heartbeat waits for, which ends the session on a
+ * timeout roughly three minutes later.
+ */
+internal fun unwrap(envelope: Envelope, pairingKey: String): Envelope? {
+    if (envelope.type != MessageType.ENCRYPTED) return envelope
+    val payload = envelope.payload as? JsonObject ?: return null
+    val decrypted = runCatching { SecureEnvelope.decrypt(pairingKey, payload) }.getOrNull() ?: return null
+    return runCatching { Protocol.decodeEnvelope(decrypted) }.getOrNull()
+}
+
+
 @Singleton
 class WebSocketClient @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -175,12 +193,8 @@ class WebSocketClient @Inject constructor(
                         onRelayControl(webSocket, text, pairing, serial, retryingOnFailure)
                         return@synchronized
                     }
-                    var envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return@synchronized
-                    if (envelope.type == MessageType.ENCRYPTED) {
-                        val payload = envelope.payload as? JsonObject ?: return@synchronized
-                        val decrypted = runCatching { SecureEnvelope.decrypt(pairing.pairingKey, payload) }.getOrNull() ?: return@synchronized
-                        envelope = runCatching { Protocol.decodeEnvelope(decrypted) }.getOrNull() ?: return@synchronized
-                    }
+                    val decoded = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return@synchronized
+                    val envelope = unwrap(decoded, pairing.pairingKey) ?: return@synchronized
                     dispatch(webSocket, envelope, pairing, serial, retryingOnFailure)
                 }
 
@@ -318,7 +332,8 @@ class WebSocketClient @Inject constructor(
                 } finally {
                     plaintext.fill(0)
                 }
-                if (envelope != null) dispatch(webSocket, envelope, pairing, serial, retryingOnFailure)
+                val unwrapped = envelope?.let { unwrap(it, pairing.pairingKey) }
+                if (unwrapped != null) dispatch(webSocket, unwrapped, pairing, serial, retryingOnFailure)
             }
             SecureStep.Continue -> Unit
         }

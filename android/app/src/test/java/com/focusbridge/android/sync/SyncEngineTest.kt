@@ -128,4 +128,37 @@ class SyncEngineTest {
             job.cancelAndJoin()
         }
     }
+
+    @Test fun supervisorDoesNotDialTheSavedDesktopWhenAutoReconnectIsOff() = runBlocking {
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            // Silently reattaching to whichever PC answers first is exactly what
+            // this switch exists to prevent when several are paired.
+            assertTrue(attempts.isEmpty())
+            delay(200)
+            assertTrue(attempts.isEmpty())
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun autoReconnectDefaultsToOnSoUpgradesKeepSyncing() = runBlocking {
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns null
+        assertTrue(engine.autoReconnectEnabled())
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
+        assertTrue(engine.autoReconnectEnabled())
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
+        assertFalse(engine.autoReconnectEnabled())
+    }
+
+    @Test fun theSupervisorStillDialsWhenAutoReconnectIsOn() = runBlocking {
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            assertTrue(attempts.isNotEmpty())
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
 }

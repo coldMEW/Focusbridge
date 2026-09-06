@@ -85,3 +85,28 @@ export function relayErrorMessage(error: unknown): string {
   }
   return raw || "Cross-network sync could not be changed. Please retry.";
 }
+
+/**
+ * How the phone is actually reaching this PC right now.
+ *
+ * This reads the live transport the server recorded, not a stored preference:
+ * the pairing carries both a local address and a relay route, so which one is
+ * in use is a fact about the current connection and can change without any
+ * setting changing.
+ */
+export function describeTransport(
+  connected: boolean,
+  activeTransport: string | null | undefined,
+): string {
+  if (!connected) return "Not connected";
+  switch ((activeTransport ?? "").toLowerCase()) {
+    case "relay":
+      return "Cross-network relay";
+    case "wss":
+      return "Local network";
+    case "ws_legacy":
+      return "Local network (legacy pairing)";
+    default:
+      return "Connected";
+  }
+}

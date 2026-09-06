@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { relayErrorMessage, summarizeRelay, type RelayStatus } from "./relay";
+import { describeTransport, relayErrorMessage, summarizeRelay, type RelayStatus } from "./relay";
 
 const NOW = 1_700_000_000_000;
 
@@ -75,5 +75,24 @@ describe("relayErrorMessage", () => {
       "relay returned a malformed pair",
     );
     expect(relayErrorMessage(undefined)).toContain("could not be changed");
+  });
+});
+
+describe("describeTransport", () => {
+  it("names the route actually in use", () => {
+    expect(describeTransport(true, "relay")).toBe("Cross-network relay");
+    expect(describeTransport(true, "wss")).toBe("Local network");
+    expect(describeTransport(true, "ws_legacy")).toBe("Local network (legacy pairing)");
+  });
+
+  it("never claims a route while disconnected", () => {
+    expect(describeTransport(false, "relay")).toBe("Not connected");
+    expect(describeTransport(false, "wss")).toBe("Not connected");
+  });
+
+  it("does not invent a transport it was not told about", () => {
+    expect(describeTransport(true, null)).toBe("Connected");
+    expect(describeTransport(true, "")).toBe("Connected");
+    expect(describeTransport(true, "something-new")).toBe("Connected");
   });
 });

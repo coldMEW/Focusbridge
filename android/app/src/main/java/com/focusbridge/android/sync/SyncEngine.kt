@@ -32,7 +32,7 @@ class SyncEngine @Inject constructor(
                     // Nothing to do until the user pairs or accepts a reconnect.
                 } else if (client.isConnected()) {
                     flushPending()
-                } else if (!client.isAwaitingPeer()) {
+                } else if (!client.isAwaitingPeer() && autoReconnectEnabled()) {
                     connectActivePairing()
                 }
             } catch (cancelled: CancellationException) {
@@ -126,10 +126,27 @@ class SyncEngine @Inject constructor(
             }
         } == ConnectionState.CONNECTED
 
+    /**
+     * Whether the background supervisor may dial the saved desktop on its own.
+     *
+     * Off, this phone still connects when the user asks, but it will not attach
+     * itself to the last desktop it saw. That matters when more than one PC has
+     * been paired: silently reattaching sends notifications to whichever machine
+     * answers first, which may not be the one the user is sitting at.
+     *
+     * Defaults to on, so an upgrade does not quietly stop syncing.
+     */
+    suspend fun autoReconnectEnabled(): Boolean = config.get(AUTO_RECONNECT_KEY) != "false"
+
+    suspend fun setAutoReconnect(enabled: Boolean) {
+        config.set(AUTO_RECONNECT_KEY, enabled.toString())
+    }
+
     private suspend fun isManuallyDisconnected(): Boolean =
         client.isManuallyDisconnected() || config.get("manual_disconnect") == "true"
 
-    private companion object {
+    companion object {
+        const val AUTO_RECONNECT_KEY = "auto_reconnect"
         const val CONNECT_TIMEOUT_MS = 4_000L
         // The relay adds a round trip to Cloudflare plus a full Noise handshake and
         // an authenticated exchange, so it needs a longer budget than a LAN dial.

@@ -5,6 +5,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { useStudyMode } from "../hooks/useStudyMode";
 import { useConnection } from "../hooks/useConnection";
 import CrossNetworkPanel from "./CrossNetworkPanel";
+import { describeTransport } from "../lib/relay";
 import {
   lockTimeoutLabel,
   lockTimeoutMinutesFrom,
@@ -59,7 +60,6 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
   const { on: studyMode, toggle: toggleStudyMode } = useStudyMode();
   const twoFaMode = useSettingsStore((s) => s.twoFaModeEnabled);
   const setTwoFaMode = useSettingsStore((s) => s.setTwoFaMode);
-  const syncMode = useSettingsStore((s) => s.syncMode);
   const lockTimeoutMinutes = useSettingsStore((s) => s.lockTimeoutMinutes);
   const replaceSettings = useSettingsStore((s) => s.replace);
   const clearAll = useNotificationStore((s) => s.clear);
@@ -187,9 +187,9 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
         </div>
       )}
       <div className={fullPage ? "mx-auto grid w-full max-w-3xl gap-5" : ""}>
-      <div className={fullPage ? "" : "mb-5"}>
-        <CrossNetworkPanel />
-      </div>
+      {/* Settings page only. The sidebar copy of this panel sits beside the
+          inbox, where a connection-setup card is noise once you are connected. */}
+      {fullPage && <CrossNetworkPanel />}
       {!fullPage && (
       <>
       <div className={fullPage ? "rounded-[32px] border border-border-subtle bg-bg-secondary/60 p-5" : ""}>
@@ -217,7 +217,11 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
           </span>
           <span className={twoFaMode ? "toggle-dot active" : "toggle-dot"} />
         </button>
-        <RuleRow label="Sync mode" value={syncMode === "LOCAL" ? "Local LAN only" : "Cloud relay"} active />
+        <RuleRow
+          label="Sync mode"
+          value={describeTransport(diagnostics?.connected ?? false, diagnostics?.activeTransport)}
+          active={diagnostics?.connected ?? false}
+        />
       </div>
       </div>
 
@@ -228,8 +232,9 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
               Connection diagnostics
             </div>
             <p className="mt-2 text-sm leading-5 text-text-secondary">
-              Local mode uses port 9173. If university Wi-Fi blocks device-to-device traffic, use
-              hotspot until relay mode ships.
+              Your local network is used whenever both devices are on it, over port 9173. If a
+              network blocks device-to-device traffic, turn on cross-network sync and your phone
+              will reach this PC through the relay instead, from any network.
             </p>
           </div>
             <button

@@ -13,6 +13,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import android.util.Size
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -110,6 +113,7 @@ import com.focusbridge.android.security.MobileLockAttempts
 import com.focusbridge.android.security.MobileLockSession
 import com.focusbridge.android.service.SyncForegroundService
 import com.focusbridge.android.sync.ConnectionState
+import com.focusbridge.android.sync.SyncEngine
 import com.focusbridge.android.sync.connectionHint
 import com.focusbridge.android.sync.WebSocketClient
 import com.google.zxing.BarcodeFormat
@@ -235,6 +239,10 @@ private fun FocusBridgeScreen(
         configRepository.observe("study_mode_enabled").map { it == "true" }
     }
     val studyMode by studyModeFlow.collectAsState(initial = false)
+    val autoReconnectFlow = remember(configRepository) {
+        configRepository.observe(SyncEngine.AUTO_RECONNECT_KEY).map { it != "false" }
+    }
+    val autoReconnect by autoReconnectFlow.collectAsState(initial = true)
     val privacyModeFlow = remember(configRepository) {
         configRepository.observe("privacy_mode_enabled").map { it == "true" }
     }
@@ -472,6 +480,12 @@ private fun FocusBridgeScreen(
                         )
                         AppTab.Pair -> PairTab(pairingManager = pairingManager, startSync = startSync, compact = compact)
                         AppTab.Rules -> RulesTab(
+                            autoReconnect = autoReconnect,
+                            onAutoReconnectChange = { on ->
+                                scope.launch {
+                                    configRepository.set(SyncEngine.AUTO_RECONNECT_KEY, on.toString())
+                                }
+                            },
                             studyMode = studyMode,
                             privacyMode = privacyMode,
                             priorityKeywords = priorityKeywords.orEmpty(),
@@ -973,6 +987,16 @@ private fun QrScanner(
                             }
                             val analyzer = ImageAnalysis.Builder()
                                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .setResolutionSelector(
+                                    ResolutionSelector.Builder()
+                                        .setResolutionStrategy(
+                                            ResolutionStrategy(
+                                                Size(1280, 720),
+                                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                                            ),
+                                        )
+                                        .build(),
+                                )
                                 .build()
                                 .also { imageAnalysis ->
                                     imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
@@ -1060,7 +1084,14 @@ private fun decodeQr(imageProxy: ImageProxy): String? {
         )
         val bitmap = BinaryBitmap(HybridBinarizer(source))
         val reader = MultiFormatReader().apply {
-            setHints(mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE)))
+            setHints(
+                mapOf(
+                    DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+                    // Worth the extra work per frame: this code is dense enough
+                    // that a single-pass decode misses it at arm's length.
+                    DecodeHintType.TRY_HARDER to true,
+                ),
+            )
         }
         reader.decode(bitmap).text
     }.getOrNull()
@@ -1150,6 +1181,8 @@ private fun MobileAppLockGate(
 
 @Composable
 private fun RulesTab(
+    autoReconnect: Boolean,
+    onAutoReconnectChange: (Boolean) -> Unit,
     studyMode: Boolean,
     privacyMode: Boolean,
     priorityKeywords: String,
@@ -1209,6 +1242,15 @@ private fun RulesTab(
                 value = blockedKeywords,
                 placeholder = "promo, sale, newsletter",
                 onValueChange = onBlockedKeywordsChange,
+            )
+        }
+        item {
+            RuleCard(
+                "Reconnect automatically",
+                "Rejoin the last paired PC on its own. Turn this off if several " +
+                    "computers are paired and you would rather choose each time.",
+                autoReconnect,
+                onAutoReconnectChange,
             )
         }
         item {
