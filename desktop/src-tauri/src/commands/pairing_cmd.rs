@@ -143,6 +143,13 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
     // missing the QR stays a working LAN pairing rather than advertising a relay
     // the phone could not authenticate to.
     let (relay, noise) = relay_pairing_blocks(&state);
+    // A phone that scans this code may only be able to reach this PC through the
+    // relay, and it cannot dial the PC directly. Showing the code is therefore
+    // also a request to be present at the relay, whatever the automatic
+    // reconnection preference says: the user is asking for a phone right now.
+    if relay.is_some() {
+        state.request_relay_connection();
+    }
     let payload = QrPayload {
         v: if relay.is_some() { 2 } else { 1 },
         mode: "local".into(),

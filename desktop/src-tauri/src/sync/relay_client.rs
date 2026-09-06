@@ -39,6 +39,16 @@ const MAX_BACKOFF: Duration = Duration::from_secs(120);
 
 type RelaySocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
+/// Explains once why the relay is not connected.
+///
+/// This used to be silent, which made "it will not connect" impossible to tell
+/// apart from "it was never configured" without reading the source.
+fn idle_once(state: &AppState, reason: &str) {
+    if state.note_relay_idle(reason) {
+        info!(reason, "relay idle");
+    }
+}
+
 /// Supervises the relay connection for the lifetime of the app.
 ///
 /// It is deliberately quiet when no relay pair is configured: cross-network sync
@@ -50,6 +60,11 @@ pub async fn start(state: AppState, local_port: u16) {
         // user asks for a phone, so it cannot attach to one they did not choose.
         let automatic = relay_api::auto_connect(&state.db_path).unwrap_or(true);
         if !automatic && !state.relay_connection_requested() {
+            idle_once(
+                &state,
+                "waiting: automatic reconnection is off, so this PC joins the relay \
+                 only when you pick a phone or show a pairing code",
+            );
             state.await_relay_request().await;
         }
         match attempt(&state, local_port).await {
@@ -69,9 +84,14 @@ pub async fn start(state: AppState, local_port: u16) {
 /// reset its backoff.
 async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
     let Some(pair) = relay_api::current_pair(&state.db_path)? else {
+        idle_once(state, "cross-network sync is not set up on this PC");
         return Ok(false);
     };
     if relay_identity::pair_secrets(&state.db_path, &pair.pair_id)?.is_none() {
+        idle_once(
+            state,
+            "this relay pair has no local key material; set it up again",
+        );
         return Ok(false);
     }
     let identity = relay_identity::identity(&state.db_path)?;

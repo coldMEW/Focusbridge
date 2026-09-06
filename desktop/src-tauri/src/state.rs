@@ -42,6 +42,7 @@ pub struct AppState {
     /// automatic connection, and cleared once a session is established.
     relay_requested: Arc<AtomicBool>,
     relay_wake: Arc<Notify>,
+    relay_idle_reason: Arc<Mutex<Option<String>>>,
 }
 
 impl AppState {
@@ -54,13 +55,32 @@ impl AppState {
             diagnostics: Arc::new(Mutex::new(ConnectionDiagnostics::default())),
             relay_requested: Arc::new(AtomicBool::new(false)),
             relay_wake: Arc::new(Notify::new()),
+            relay_idle_reason: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// True when this is a new reason, so it is worth saying out loud.
+    pub fn note_relay_idle(&self, reason: &str) -> bool {
+        let mut current = self
+            .relay_idle_reason
+            .lock()
+            .expect("relay idle lock poisoned");
+        if current.as_deref() == Some(reason) {
+            return false;
+        }
+        *current = Some(reason.to_string());
+        true
     }
 
     /// Asks the relay client to connect now, even when automatic connection is
     /// off. This is how "reconnect this phone" reaches a phone on another
     /// network: neither device can dial the other, so both meet at the relay.
     pub fn request_relay_connection(&self) {
+        // The next idle reason is worth repeating: circumstances just changed.
+        *self
+            .relay_idle_reason
+            .lock()
+            .expect("relay idle lock poisoned") = None;
         self.relay_requested.store(true, Ordering::Release);
         self.relay_wake.notify_waiters();
     }
