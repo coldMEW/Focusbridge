@@ -7,6 +7,7 @@ import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
@@ -112,10 +113,7 @@ class PairingManager @Inject constructor(
 
     /** Parses a payload for display without saving anything. Null when unusable. */
     fun preview(rawQrPayload: String): PairingPreview? = runCatching {
-        val payload = json.decodeFromString(
-            QrPairingPayload.serializer(),
-            pairingPayloadFromInput(rawQrPayload),
-        )
+        val payload = parsePairingPayload(rawQrPayload, json)
         PairingPreview(
             endpoint = payload.syncEndpointCandidates().firstOrNull() ?: payload.endpoint,
             certificateFingerprint = payload.certFingerprint,
@@ -124,7 +122,7 @@ class PairingManager @Inject constructor(
     }.getOrNull()
 
     suspend fun consume(rawQrPayload: String): PairingEntity {
-        val payload = json.decodeFromString(QrPairingPayload.serializer(), pairingPayloadFromInput(rawQrPayload))
+        val payload = parsePairingPayload(rawQrPayload, json)
         val candidates = payload.syncEndpointCandidates()
         // Relay details are accepted only as a matched set. A half-populated block
         // would leave the phone dialing a relay it cannot authenticate to, so it is
@@ -151,16 +149,134 @@ class PairingManager @Inject constructor(
     }
 }
 
+/**
+ * Reads whatever the user gave us: a scanned link in either encoding, or JSON
+ * pasted by hand.
+ *
+ * The QR carries the compact form because the JSON one was too dense to scan --
+ * 963 characters is a 117-module symbol, under three pixels a module at the size
+ * a monitor shows it. Typed and pasted payloads stay JSON, so both are accepted.
+ */
+internal fun parsePairingPayload(input: String, json: Json): QrPairingPayload {
+    compactParam(input)?.let { return decodeCompactPayload(it) }
+    return json.decodeFromString(QrPairingPayload.serializer(), pairingPayloadFromInput(input))
+}
+
+private fun queryParam(input: String, name: String): String? {
+    val trimmed = input.trim()
+    if (!trimmed.startsWith("focusbridge://", ignoreCase = true)) return null
+    val uri = URI(trimmed)
+    require(uri.host == "pair") { "Unsupported FocusBridge link" }
+    return uri.rawQuery
+        ?.split('&')
+        ?.firstOrNull { it.substringBefore('=') == name }
+        ?.substringAfter('=', "")
+        ?.takeIf { it.isNotBlank() }
+}
+
+private fun compactParam(input: String): String? = runCatching { queryParam(input, "c") }.getOrNull()
+
 internal fun pairingPayloadFromInput(input: String): String {
     val trimmed = input.trim()
     if (!trimmed.startsWith("focusbridge://", ignoreCase = true)) return trimmed
-    val uri = URI(trimmed)
-    require(uri.host == "pair") { "Unsupported FocusBridge link" }
-    val payload = uri.rawQuery
-        ?.split('&')
-        ?.firstOrNull { it.substringBefore('=') == "payload" }
-        ?.substringAfter('=', "")
-        ?.takeIf { it.isNotBlank() }
+    val payload = queryParam(trimmed, "payload")
     return requireNotNull(payload) { "Missing pairing payload" }
         .let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
+}
+
+/**
+ * The compact QR encoding, version 3. The desktop writes the same layout; the
+ * field order below is the wire format and the two have to stay identical.
+ *
+ * ```text
+ *   0      version, 3
+ *   1      flags; bit 0 set when the relay and Noise blocks are present
+ *   2..18  device id, the raw UUID
+ *  18..50  pairing key
+ *  50..82  certificate fingerprint
+ *  82      number of LAN candidates, then 4 bytes of IPv4 and 2 of port each
+ *          when bit 0 is set: relay URL length, the URL, then the account key
+ *          (32), pair id (16), capability (32), desktop key (32) and PSK (32)
+ * ```
+ */
+internal fun decodeCompactPayload(encoded: String): QrPairingPayload {
+    val bytes = try {
+        Base64.getUrlDecoder().decode(encoded.trimEnd('='))
+    } catch (failure: IllegalArgumentException) {
+        throw IllegalArgumentException("This is not a FocusBridge pairing code", failure)
+    }
+    val reader = CompactReader(bytes)
+    require(reader.byte() == COMPACT_VERSION) {
+        "This pairing code was made by a newer version of FocusBridge"
+    }
+    val flags = reader.byte().toInt()
+    val deviceId = reader.take(16).toUuidString()
+    val pairingKey = reader.take(32).toHex()
+    val certFingerprint = reader.take(32).toHex()
+
+    val candidateCount = reader.byte().toInt() and 0xFF
+    val candidates = (0 until candidateCount).map {
+        val raw = reader.take(6)
+        val host = (0 until 4).joinToString(".") { index -> (raw[index].toInt() and 0xFF).toString() }
+        val port = ((raw[4].toInt() and 0xFF) shl 8) or (raw[5].toInt() and 0xFF)
+        "wss://$host:$port"
+    }
+    require(candidates.isNotEmpty()) { "This pairing code has no address to connect to" }
+
+    var relay: QrRelayBlock? = null
+    var noise: QrNoiseBlock? = null
+    if (flags and COMPACT_FLAG_RELAY != 0) {
+        val url = String(reader.take(reader.byte().toInt() and 0xFF), StandardCharsets.UTF_8)
+        val accountKey = reader.take(32).toHex()
+        val pairId = reader.take(16).toHex()
+        // The capability is a bearer token the relay compares as text, so it has
+        // to come back in exactly the alphabet the relay issued it in.
+        val capability = Base64.getUrlEncoder().withoutPadding().encodeToString(reader.take(32))
+        relay = QrRelayBlock(url = url, accountKey = accountKey, pairId = pairId, capability = capability)
+        noise = QrNoiseBlock(
+            desktopKey = Base64.getEncoder().encodeToString(reader.take(32)),
+            psk = Base64.getEncoder().encodeToString(reader.take(32)),
+        )
+    }
+    // Trailing bytes mean this is not the payload it claims to be.
+    require(reader.finished()) { "This pairing code is damaged; ask the PC for a new one" }
+
+    return QrPairingPayload(
+        v = if (relay != null) 2 else 1,
+        mode = "local",
+        endpoint = candidates.first(),
+        endpointCandidates = candidates,
+        deviceId = deviceId,
+        pairingKey = pairingKey,
+        certFingerprint = certFingerprint,
+        relay = relay,
+        noise = noise,
+    )
+}
+
+private const val COMPACT_VERSION: Byte = 3
+private const val COMPACT_FLAG_RELAY = 1
+
+/** Every read is bounds-checked, so a truncated code is refused, not half-read. */
+private class CompactReader(private val bytes: ByteArray) {
+    private var at = 0
+
+    fun take(length: Int): ByteArray {
+        require(length >= 0 && at + length <= bytes.size) {
+            "This pairing code is incomplete; ask the PC for a new one"
+        }
+        return bytes.copyOfRange(at, at + length).also { at += length }
+    }
+
+    fun byte(): Byte = take(1)[0]
+
+    fun finished(): Boolean = at == bytes.size
+}
+
+private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+private fun ByteArray.toUuidString(): String {
+    val hex = toHex()
+    return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-" +
+        "${hex.substring(16, 20)}-${hex.substring(20, 32)}"
 }

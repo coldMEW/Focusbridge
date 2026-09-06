@@ -129,9 +129,10 @@ class WebSocketClient @Inject constructor(
         useRelay: Boolean = false,
         requireApproval: Boolean = false,
     ) {
-        // Nothing at all while the user has this paused, approval-gated or not:
-        // a socket held open would let the desktop keep asking.
-        if (manuallyDisconnected) return
+        // While paused, only an approval-gated connection is allowed. It carries
+        // no data until the user accepts, so it honours the disconnect while
+        // keeping this phone findable by a desktop that asks for it by name.
+        if (manuallyDisconnected && !requireApproval) return
         disconnect(showDisconnected = !retryingOnFailure)
         sessionJob = SupervisorJob()
         val serial = ++connectionSerial

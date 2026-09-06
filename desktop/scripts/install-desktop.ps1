@@ -29,6 +29,29 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Uninstalling a per-machine install needs elevation, and without it Windows
+# Installer fails with 1603 after appearing to start -- which reads as a broken
+# build rather than a missing privilege. Ask for it up front instead, and send
+# the elevated run's output to a transcript so it is still readable afterwards.
+$identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    $transcript = Join-Path $env:TEMP 'focusbridge-install.log'
+    $self = $MyInvocation.MyCommand.Path
+    $arguments = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command',
+        "Start-Transcript -Path '$transcript' -Force | Out-Null; " +
+        "& '$self' @PSBoundParameters; Stop-Transcript | Out-Null")
+    $bound = @()
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+        $bound += "-$($entry.Key)"
+        $bound += "'$($entry.Value)'"
+    }
+    $arguments[-1] = $arguments[-1].Replace('@PSBoundParameters', ($bound -join ' '))
+    Write-Host "Elevating; accept the prompt. Output goes to $transcript"
+    $elevated = Start-Process powershell -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+    if (Test-Path $transcript) { Get-Content $transcript }
+    exit $elevated.ExitCode
+}
+
 # Resolved here rather than in the param block, because Windows PowerShell
 # leaves $PSScriptRoot empty there when the script is invoked with -File.
 if (-not $Msi) {

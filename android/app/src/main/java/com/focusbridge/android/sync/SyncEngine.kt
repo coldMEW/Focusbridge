@@ -31,12 +31,15 @@ class SyncEngine @Inject constructor(
                 // Disconnect means disconnect. A manual disconnect outranks the
                 // reconnection switch, which governs ordinary drops rather than a
                 // decision the user made; letting it lift one reconnected seconds
-                // after they asked for the opposite. Staying at the relay is no
-                // better, because the desktop's presence then prompts this phone
-                // over and over. Only the user resumes: accepting a request,
-                // pressing retry, or scanning a code.
+                // after they asked for the opposite. Only the user resumes it:
+                // accepting a request, pressing retry, or scanning a code.
                 if (isManuallyDisconnected()) {
-                    // Deliberately idle.
+                    // Present, but silent. Nothing is sent or decrypted until the
+                    // user accepts, which is what makes "reconnect this phone"
+                    // possible from another network at all. The desktop is paused
+                    // by the same disconnect, so nothing arrives to ask about
+                    // until someone there asks for this phone by name.
+                    if (!client.isAwaitingPeer()) awaitApproval()
                 } else if (client.isConnected()) {
                     flushPending()
                 } else if (!client.isAwaitingPeer()) {
@@ -49,6 +52,28 @@ class SyncEngine @Inject constructor(
                 client.disconnect(showDisconnected = true)
             }
             delay(RECONNECT_INTERVAL_MS)
+        }
+    }
+
+    /**
+     * Waits at the relay for the desktop to ask, without syncing anything.
+     *
+     * No session is established and nothing is sent until the user accepts, so
+     * this respects the disconnect while still being findable. A pairing with no
+     * relay stays entirely offline, because there is no way to be asked.
+     */
+    private suspend fun awaitApproval() {
+        connectMutex.withLock {
+            if (client.isConnected() || client.isAwaitingPeer()) return@withLock
+            val pairing = pairings.active() ?: return@withLock
+            if (!pairing.supportsRelay()) return@withLock
+            client.connect(
+                pairing,
+                deviceName = DeviceInfo.deviceName,
+                retryingOnFailure = true,
+                useRelay = true,
+                requireApproval = true,
+            )
         }
     }
 

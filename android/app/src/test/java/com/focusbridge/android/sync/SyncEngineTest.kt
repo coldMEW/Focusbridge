@@ -218,8 +218,8 @@ class SyncEngineTest {
 
         val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
         try {
-            // A manual disconnect is total: no dialing, and no waiting at a relay
-            // to be asked either. Only the user resumes it.
+            // With no relay there is no way to be asked, so a disconnected
+            // LAN-only pairing stays entirely offline.
             verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
         } finally {
             job.cancelAndJoin()
@@ -229,7 +229,8 @@ class SyncEngineTest {
     @Test fun aManualDisconnectIsNotLiftedByTheReconnectionSwitch() = runBlocking {
         // Disconnect has to mean disconnect. The switch governs ordinary drops,
         // not a decision the user made, and lifting one reconnected seconds after
-        // they asked for the opposite.
+        // they asked for the opposite. The disconnect is never lifted here: it is
+        // not accepted on this phone's behalf, and nothing syncs unasked.
         coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
         coEvery { config.get("manual_disconnect") } returns "true"
         every { client.isManuallyDisconnected() } returns true
@@ -240,16 +241,19 @@ class SyncEngineTest {
         try {
             delay(200)
             verify(exactly = 0) { client.acceptReconnectRequest() }
-            verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
+            verify(exactly = 0) {
+                client.connect(any(), any(), any(), any(), any(), requireApproval = false)
+            }
         } finally {
             job.cancelAndJoin()
         }
     }
 
-    @Test fun aManualDisconnectDoesNotSitAtTheRelayBeingAskedRepeatedly() = runBlocking {
-        // Staying reachable while paused meant the desktop's presence prompted
-        // this phone over and over, which is its own kind of not-disconnected.
-        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
+    @Test fun aDisconnectedPhoneWaitsForApprovalRatherThanSyncing() = runBlocking {
+        // It stays findable so "reconnect this phone" can work across networks,
+        // but only ever approval-gated: nothing syncs until the user accepts,
+        // and the switch cannot turn that into a silent reconnection.
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
         coEvery { config.get("manual_disconnect") } returns "true"
         every { client.isManuallyDisconnected() } returns true
         coEvery { pairings.active() } returns relayPairing
@@ -257,8 +261,12 @@ class SyncEngineTest {
 
         val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
         try {
-            delay(200)
-            verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
+            verify(atLeast = 1) {
+                client.connect(relayPairing, any(), any(), any(), useRelay = true, requireApproval = true)
+            }
+            verify(exactly = 0) {
+                client.connect(any(), any(), any(), any(), any(), requireApproval = false)
+            }
         } finally {
             job.cancelAndJoin()
         }
