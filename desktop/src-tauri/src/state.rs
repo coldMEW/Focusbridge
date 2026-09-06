@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
+
+const PAIRING_SESSION_SETTING: &str = "pairing.session.v1";
 use tokio::sync::Notify;
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,6 +46,7 @@ pub struct AppState {
     relay_wake: Arc<Notify>,
     relay_idle_reason: Arc<Mutex<Option<String>>>,
     enrollment_armed: Arc<AtomicBool>,
+    known_phone_allowed: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -58,7 +61,21 @@ impl AppState {
             relay_wake: Arc::new(Notify::new()),
             relay_idle_reason: Arc::new(Mutex::new(None)),
             enrollment_armed: Arc::new(AtomicBool::new(false)),
+            known_phone_allowed: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Lets a phone this PC already knows reattach once.
+    ///
+    /// Set when the user picks a saved phone. A phone that has just scanned the
+    /// code on screen does not need it, because presenting the current pairing
+    /// key is itself the request.
+    pub fn allow_known_phone(&self) {
+        self.known_phone_allowed.store(true, Ordering::Release);
+    }
+
+    pub fn take_known_phone_allowance(&self) -> bool {
+        self.known_phone_allowed.swap(false, Ordering::AcqRel)
     }
 
     /// Allows the next phone to enroll, replacing any pinned identity.
@@ -135,11 +152,65 @@ impl AppState {
     }
 
     pub fn set_pairing(&self, session: PairingSession) {
+        // Persisted as well as held in memory. A code is scanned seconds before
+        // the phone finishes connecting, and if this PC restarts in that window
+        // the key the phone is holding matches nothing here: no live session,
+        // and no saved device either, because it never finished connecting. The
+        // pairing then fails for good and rescanning cannot help, since the same
+        // race can happen again.
+        if let Err(error) = crate::db::store::set_setting(
+            &self.db_path,
+            PAIRING_SESSION_SETTING,
+            &serde_json::json!({
+                "deviceId": session.device_id,
+                "pairingKey": session.pairing_key,
+                "certFingerprint": session.cert_fingerprint,
+                "expiresAt": session.expires_at,
+            })
+            .to_string(),
+        ) {
+            // Not fatal: the in-memory copy still serves this run.
+            tracing::warn!(error = %error, "could not persist the pairing session");
+        }
         *self.pairing.lock().expect("pairing lock poisoned") = Some(session);
     }
 
+    /// True while the pairing screen is showing a code that has not expired.
+    pub fn pairing_code_is_live(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default();
+        self.current_pairing()
+            .is_some_and(|session| session.expires_at > now)
+    }
+
     pub fn current_pairing(&self) -> Option<PairingSession> {
-        self.pairing.lock().expect("pairing lock poisoned").clone()
+        let mut held = self.pairing.lock().expect("pairing lock poisoned");
+        if held.is_none() {
+            // First read after a restart: recover the code that is still valid.
+            *held = self.load_pairing_session();
+        }
+        held.clone()
+    }
+
+    fn load_pairing_session(&self) -> Option<PairingSession> {
+        let stored =
+            crate::db::store::get_setting(&self.db_path, PAIRING_SESSION_SETTING).ok()??;
+        let value: serde_json::Value = serde_json::from_str(&stored).ok()?;
+        let text = |key: &str| value.get(key)?.as_str().map(str::to_string);
+        let session = PairingSession {
+            device_id: text("deviceId")?,
+            pairing_key: text("pairingKey")?,
+            cert_fingerprint: text("certFingerprint")?,
+            expires_at: value.get("expiresAt")?.as_i64()?,
+        };
+        // An expired code is not a pairing offer; let it go rather than reviving it.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default();
+        (session.expires_at > now).then_some(session)
     }
 
     pub fn set_phone_sender(&self, sender: UnboundedSender<String>) {

@@ -9,6 +9,20 @@ mod pairing {
 mod heartbeat;
 #[path = "../src/server/socket_io.rs"]
 mod socket_io;
+/// The pairing session is persisted through the settings store so it survives a
+/// restart. These tests exercise connection ownership, not storage, so the store
+/// is stubbed: a real one would need an encrypted database and a key.
+mod db {
+    pub mod store {
+        use std::path::Path;
+        pub fn set_setting(_db: &Path, _key: &str, _value: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        pub fn get_setting(_db: &Path, _key: &str) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+    }
+}
 #[path = "../src/state.rs"]
 mod state;
 

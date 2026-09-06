@@ -162,8 +162,11 @@ pub fn generate_pairing_qr(
     // pairing screen is also a request to be present at the relay. That is a
     // deliberate act and overrides the reconnection preference; the inbox
     // preview is not, and must not.
-    if for_pairing && relay.is_some() {
-        state.request_relay_connection("the pairing screen is showing a code");
+    if relay.is_some() {
+        // Wake the relay supervisor so it re-evaluates: a live code means this PC
+        // must be waiting where a phone that scans it can reach it. Who is then
+        // let in is decided at authentication, not here.
+        state.request_relay_connection("a pairing code is on screen");
     }
     let payload = QrPayload {
         v: if relay.is_some() { 2 } else { 1 },
@@ -322,6 +325,7 @@ pub fn request_device_reconnect(
         .map_err(|error| error.to_string())?
         .is_some()
     {
+        state.allow_known_phone();
         state.request_relay_connection("the user asked to reconnect a saved phone");
         return Ok("Waiting for your phone to accept. It can be on any network.".into());
     }

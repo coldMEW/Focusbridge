@@ -215,6 +215,30 @@ where
 
         match handle_envelope(&envelope, &expected_key) {
             IncomingDecision::AuthAccepted => {
+                // Over the relay, with automatic reconnection off, only a phone
+                // that has just scanned the code on screen may connect. It proves
+                // that by presenting the current pairing key; a phone reattaching
+                // presents an older saved one, which is precisely the silent
+                // reconnection the user turned off. Picking a saved phone grants a
+                // one-time allowance instead.
+                if peer.ip().is_loopback()
+                    && !crate::sync::relay_api::auto_connect(&state.db_path).unwrap_or(true)
+                {
+                    let just_scanned = state
+                        .current_pairing()
+                        .is_some_and(|session| session.pairing_key == expected_key)
+                        && state.pairing_code_is_live();
+                    if !just_scanned && !state.take_known_phone_allowance() {
+                        warn!(peer = %peer, "refused a known phone; automatic reconnection is off");
+                        send_text(
+                            &mut ws,
+                            r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
+                        )
+                        .await
+                        .ok();
+                        break;
+                    }
+                }
                 info!(peer = %peer, "phone authenticated");
                 active_pairing_key = Some(expected_key.clone());
                 state.set_phone_sender(outbound_tx.clone());

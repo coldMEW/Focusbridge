@@ -58,7 +58,12 @@ pub async fn start(state: AppState, local_port: u16) {
     loop {
         // When automatic connection is off this PC stays off the relay until the
         // user asks for a phone, so it cannot attach to one they did not choose.
-        let automatic = relay_api::auto_connect(&state.db_path).unwrap_or(true);
+        // Being at the relay is not the same as accepting a phone. This PC waits
+        // there whenever a pairing code is on screen, because a phone that scans
+        // it has no other way to reach this machine; whether the phone is then
+        // let in is decided when it authenticates, by which code it presents.
+        let automatic =
+            relay_api::auto_connect(&state.db_path).unwrap_or(true) || state.pairing_code_is_live();
         if !automatic && !state.relay_connection_requested() {
             idle_once(
                 &state,
