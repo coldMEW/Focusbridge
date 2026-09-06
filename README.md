@@ -46,9 +46,16 @@ data, laptop on café Wi-Fi, either device behind a router that blocks incoming
 connections — they meet at a relay instead. FocusBridge prefers the local path
 whenever it exists and falls back without you doing anything.
 
-**You decide what reconnects.** Both ends can be told to reconnect
-automatically, or to ask first. With asking turned on, your phone stays
-reachable but notifies you before letting a PC in.
+**Reconnect from the PC, from anywhere.** Pick a phone under previous
+connections and it reconnects, even when the two are on different networks and
+neither can dial the other. A disconnected phone stays reachable for exactly
+this reason: it holds no session and sends nothing, it is simply somewhere the
+PC can reach it.
+
+**You decide what reconnects.** Both ends have a switch. On, a device you have
+paired before reconnects without asking. Off, nothing connects silently — the PC
+waits until you choose a phone, and the phone notifies you before letting a PC
+in. It is one decision on each side, and it is the only thing that decides.
 
 ## Privacy
 
@@ -64,7 +71,8 @@ paired PC.
   both the phone and the PC, with the key held by the operating system's own
   keystore rather than a password you type.
 - **Pairing is deliberate.** A PC gets access only when you scan its code and
-  confirm, and only after you have compared the security code it shows. You can
+  confirm, and only after you have compared the security code it shows. A
+  pairing link cannot connect anything on its own, however it arrives. You can
   revoke a device at any time, from either end.
 - **Local sync needs no account.** Same-network use works with no sign-in and no
   internet connection at all. An account is only needed to turn on the
@@ -98,12 +106,26 @@ comparison against Microsoft Phone Link is written down honestly in
 It also cannot reach a phone that is switched off, out of signal, or has been
 force-stopped by the system, and no notification app can.
 
+## Security
+
+Reviewed in depth, with the findings and the remaining gaps written down in
+[`docs/security-review-2026-09-06.md`](docs/security-review-2026-09-06.md)
+rather than summarised away. Among the things it covers: a rejected database key
+can no longer alter the database, a pairing link can no longer connect a phone
+without being accepted, the local listener bounds how many connections an
+unauthenticated peer can hold, and nothing logs notification content.
+
+What has not happened is stated just as plainly: there has been no independent
+audit, release signing still uses a debug key, and no overnight endurance run.
+
 ## Status
 
-Working and in daily use by its author, with cross-network sync verified on real
-hardware — phone on cellular, PC on Wi-Fi. Release signing and a broader device
-matrix are still outstanding before a public release; the remaining gates are
-tracked in [`docs/`](docs/).
+Working and in daily use by its author. Cross-network sync is verified on real
+hardware: a Pixel 7 on cellular only, with no Wi-Fi at all, reaching a Windows
+PC on home Wi-Fi through the relay.
+
+Release signing and a broader device matrix are still outstanding before a
+public release, and the remaining gates are tracked in [`docs/`](docs/).
 
 ## Documentation
 
@@ -113,6 +135,8 @@ tracked in [`docs/`](docs/).
   including what is missing
 - [Security model](docs/security-model.md) and [privacy policy](docs/privacy-policy.md)
 - [Architecture](docs/architecture.md)
+- [Cross-network acceptance run](docs/cross-network-acceptance.md) — how to
+  reproduce the different-network test, and what has and has not been run
 
 ## Licence
 
