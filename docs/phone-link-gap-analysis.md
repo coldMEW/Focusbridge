@@ -92,25 +92,33 @@ command with a stable identifier so a retry cannot send a reply twice, and a
 clear separation in the UI between "clear from this list" and "dismiss on my
 phone" — which today are the same button and mean the weaker of the two.
 
-## Concrete source findings
+## Source findings, and what became of them
 
-- `desktop/src-tauri/src/sync/relay_client.rs` contains only `RelayConfig`, not a
-  running desktop relay client. Android explicitly rejects non-local pairing.
-- `request_device_reconnect` in `commands/pairing_cmd.rs` calls `send_to_phone`;
-  no independent offline/wake channel exists. A saved IP is not remote reachability.
-- `NotificationService.onNotificationRemoved` only updates local queue status;
-  it does not send an acknowledged dismissal to desktop. It also marks a removed
-  batch SENT without proof of desktop storage; this needs a delivery-policy fix.
-- `commands/notification_cmd.rs` deletes desktop SQLite history, not the original
-  Android notification. History deletion and notification dismissal need separate
-  semantics and distinct UI labels.
-- `set_study_mode` persists desktop state without sending it to Android.
-  `RULES_UPDATE` must carry a versioned complete desired rule/mode snapshot.
-- Desktop server now actively probes transport liveness. Android still relies on
-  a 15-second retry supervisor and lacks a network-change callback.
-- Whole-database encryption and replay-safe session/key management are being
-  implemented/reviewed separately. Do not unblock relay based on existing AES
-  encryption alone: the legacy relay AUTH key also derives the content key.
+Recorded on 2026-09-05, resolved on 2026-09-06 unless marked otherwise.
+
+- **Fixed.** `sync/relay_client.rs` held only a `RelayConfig` struct, and Android
+  rejected any non-local pairing outright. Both ends now dial the deployed relay
+  and run a device-only session over it.
+- **Fixed.** `request_device_reconnect` called `send_to_phone`, so it could only
+  reach a phone that was already connected. It now joins the relay and waits,
+  and the phone keeps a control-only presence there so it can be asked at all.
+- **Fixed.** The desktop encrypted everything after `AUTH_OK`, and the relay
+  transport dispatched without unwrapping that layer, so every reply was
+  discarded — including the heartbeat response, which ended each session after
+  about three minutes.
+- **Open.** `NotificationService.onNotificationRemoved` still only updates local
+  queue status rather than sending an acknowledged dismissal, and still marks a
+  removed batch SENT without proof the desktop stored it.
+- **Open.** `commands/notification_cmd.rs` deletes desktop history, not the
+  notification on the phone. These need separate semantics and distinct labels;
+  see the notification-actions gap above.
+- **Open.** `set_study_mode` persists desktop state without sending it to
+  Android. `RULES_UPDATE` should carry a versioned complete desired snapshot.
+- **Open.** Android has no network-change callback and still relies on a
+  15-second retry supervisor, so a Wi-Fi to cellular switch is noticed late.
+- **Fixed.** Whole-database encryption is active on both platforms, and the
+  replay-safe session is the shared Noise engine rather than the old
+  pairing-key envelope. The relay is no longer blocked.
 
 ## Target architecture
 
