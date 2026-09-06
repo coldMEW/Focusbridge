@@ -23,6 +23,9 @@ use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 use tracing::{error, info, warn};
 
+/// Ceiling on connections being handled at once, authenticated or not.
+pub const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 24;
+
 pub struct WsServerConfig {
     pub bind: SocketAddr,
 }
@@ -42,8 +45,21 @@ async fn run(cfg: WsServerConfig, state: AppState, app: AppHandle) -> Result<()>
     let tls_acceptor = TlsAcceptor::from(std::sync::Arc::new(tls_cfg));
     info!(bind = %cfg.bind, "desktop wss server listening");
 
+    // This listener is reachable from the whole local network, and each
+    // connection costs a TLS handshake, buffers and a task for up to the
+    // authentication deadline. Without a ceiling, anything on the network can
+    // exhaust the machine by opening sockets and never authenticating. One phone
+    // and the loopback relay bridge need two; the rest is slack for reconnects.
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_UNAUTHENTICATED_CONNECTIONS));
     loop {
         let (stream, peer) = listener.accept().await.context("accept websocket tcp")?;
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            // Dropping is deliberate: queueing would move the exhaustion rather
+            // than refuse it, and a real phone retries within seconds.
+            warn!(peer = %peer, "refused connection; too many are already open");
+            drop(stream);
+            continue;
+        };
         let state = state.clone();
         let app = app.clone();
         let tls_acceptor = tls_acceptor.clone();
@@ -51,6 +67,7 @@ async fn run(cfg: WsServerConfig, state: AppState, app: AppHandle) -> Result<()>
             if let Err(err) = handle_connection(stream, peer, state, app, tls_acceptor).await {
                 warn!(peer = %peer, error = %err, "websocket connection ended");
             }
+            drop(slot);
         });
     }
 }
