@@ -7,52 +7,90 @@ complete private server implementation or cryptographic protocol.
 
 ## What "anywhere" actually means
 
-Phone Link permits mobile-data content sync when enabled. Microsoft still
-documents LAN isolation, battery-saving behavior, firewalls, and public networks
-as possible obstacles. Calling requires Bluetooth; Apps/phone-screen features
-have same-Wi-Fi and supported-device requirements. There is no documented promise
-that every feature works on every network or every phone.
+Reviewed again 2026-09-06 against Microsoft's current documentation, because
+this claim drove the whole relay design and it is worth being precise about.
+
+Phone Link does **not** hold a connection open from anywhere by magic. Its own
+troubleshooting page states: "To ensure the fastest, most reliable connection,
+your Android device and PC must be connected to the same trusted Wi-Fi network."
+Cross-network use is an explicit opt-in toggle inside Link to Windows —
+*Settings > Sync over mobile data > On* — which Microsoft recommends leaving off
+to avoid data charges.
+
+Microsoft documents the same obstacles FocusBridge faces, in the same words:
+
+- **Router AP isolation.** "If this Wireless Isolation (or AP Isolation) is
+  enabled, then all devices connected to the Wi-Fi network will be blocked from
+  communicating." This is why same-Wi-Fi alone is not sufficient, for either app.
+- **Battery optimisation.** Link to Windows must be exempted or connections are
+  interrupted — the same requirement FocusBridge puts in its setup checklist.
+- **Background execution.** Phone Link must be allowed to run in the background
+  on the PC.
+
+Microsoft never documents a relay, but a mobile-data sync toggle cannot work
+without a rendezvous point: two devices on different carrier networks have no
+route to each other. So the architecture is necessarily the same shape as the
+one FocusBridge now uses.
+
+**FocusBridge matches this model, and differs in one way.** Phone Link makes
+cross-network sync a setting the user must find and enable. FocusBridge tries
+every local address first and falls back to the relay automatically, so there is
+nothing to turn on for it to keep working when you leave the house. The relay
+itself is opt-in, because it needs an account; the fallback is not.
 
 Sources: [connectivity troubleshooting](https://support.microsoft.com/en-us/windows/apps/phonelink/troubleshooting-the-phone-link),
+[requirements and setup](https://support.microsoft.com/en-us/windows/apps/phonelink/phone-link-requirements-and-setup),
+[frequently asked questions](https://support.microsoft.com/en-us/topic/frequently-asked-questions-about-the-phone-link-7ccef61d-7bbd-2b26-77ec-76e9a358c25d),
 [calls](https://support.microsoft.com/en-us/windows/apps/phonelink/setting-up-calls-in-the-phone-link),
 [Apps troubleshooting](https://support.microsoft.com/en-us/windows/apps/phonelink/troubleshoot-apps-in-the-phone-link).
 
 ## Feature comparison
 
-"Present" below means implemented in the examined source, not certified on every
-device. The confirmed physical test device is a Pixel 7 running Android 17, with
-a Windows desktop on a reachable local Wi-Fi network.
+"Present" means implemented and exercised on the confirmed test hardware — a
+Pixel 7 and a Windows 11 desktop — not certified on every device.
 
-| Capability | Phone Link public behavior | FocusBridge current state and required work |
+| Capability | Phone Link | FocusBridge |
 | --- | --- | --- |
-| QR and manual pairing | Account-linked onboarding and phone permission prompts | LAN QR/manual payload and pinned certificate present; remote rendezvous absent |
-| Saved devices | Account device list, additional PCs require authorization | Stable phone install ID/name/time present; local list is not cloud presence |
-| Different-network sync | Mobile-data sync setting | Blocked until secure relay client/server protocol is ready; desktop relay client is a stub |
-| Reconnect from PC | Authorized account-linked device workflow | Current request uses the existing socket, so cannot reach a disconnected phone |
-| Notifications | Capture, display, app selection | Present, with ACK queue; real app-specific parsing and background acceptance still need broader testing |
-| Notification actions | Supported replies and actions; dismissals propagate to Android | No complete RemoteInput/action pipeline; desktop delete currently deletes local history only |
-| SMS/MMS | Read/send; device-dependent RCS support | Notification mirroring is not SMS access; no SMS/MMS backend |
-| Calling | Bluetooth calling and recent calls | No call audio/dialer backend; ongoing call notifications are filtered, so do not promise call coverage |
-| App list and app control | Supported-device app mirroring and launch | Inventory names/icons/categories and filtering rules present; not remote app execution |
-| Photos/files | Windows 11 photo access moving to File Explorer; file sharing | Not implemented; needs explicit consent and bounded encrypted transfers |
-| Clipboard | Text/images on supported devices, opt-in | Not implemented; must avoid silent clipboard/credential capture |
-| Media controls | Compatible phone players can be controlled | Not implemented; needs capability-scoped media-session commands |
-| DND/volume | Available device controls; Android-version limitations | FocusBridge Study Mode is an app filter, not Android system DND |
-| Instant Hotspot | Limited OEM/device support with Wi-Fi/Bluetooth prerequisites | Not implemented; ordinary app privileges cannot promise OEM system integrations |
-| Desktop settings | Feature-level enable/disable | Rule text/app toggles exist; full desired/applied version and error reporting absent |
-| Focused triage | General phone companion | Masked Peek, keyword/contact/app rules, Study lane, retention are FocusBridge's differentiators |
-| Multi-device and user isolation | Multiple phones/PCs with account authorization | Current desktop sender is a single active socket; per-user/device routing must replace it before multi-device claims |
+| Same-network sync | Recommended path | **Present.** Preferred automatically; needs no account and no Internet |
+| Different-network sync | Opt-in "sync over mobile data" | **Present.** Verified phone-on-cellular to PC-on-Wi-Fi; falls back without being asked |
+| Reconnect initiated from the PC | Account-linked device workflow | **Present.** The phone keeps a control-only presence at the relay, so the PC can ask from any network and the phone prompts before letting it in |
+| Pairing | Account-linked onboarding, QR | **Present.** QR or manual, with a confirmation showing the address, whether the PC will be reachable off-LAN, and a certificate code to compare |
+| Saved devices | Account device list | **Present.** Stable install identity, transport shown honestly as local or relay |
+| Notifications | Capture, display, app selection | **Present**, with delivery acknowledgements and a retry queue |
+| Notification filtering | App selection only | **Better.** Per-app mute/priority/study-safe, priority and blocked keywords, favourite contacts — enforced on the phone, so filtered notifications are never transmitted |
+| Privacy of content in transit | Not documented | **Better.** Sealed end to end; the relay routes ciphertext it holds no key for |
+| Encryption at rest | Not documented | **Present.** SQLCipher on both ends, keys in DPAPI and the Android Keystore |
+| Notification actions and replies | Supported; dismissals propagate | **Missing.** Dismissal is one-way and desktop deletion only clears local history |
+| SMS/MMS | Read and send | **Missing**, and out of scope: mirroring a message notification is not SMS access |
+| Calling | Bluetooth calling, recent calls | **Missing**, out of scope |
+| Photos | Recent photos on the PC | **Missing**, out of scope |
+| App streaming / phone screen | Supported devices only | **Missing**, out of scope |
+| Clipboard | Opt-in, supported devices | **Missing.** Deliberate: silent clipboard capture would read passwords |
+| File transfer | Supported | **Missing**, out of scope |
+| Media controls | Compatible players | **Missing.** The most defensible future addition of these |
+| Instant hotspot | Limited OEM support | **Missing.** Ordinary app privileges cannot deliver this |
+| Do not disturb / volume | Device controls | Study Mode is an app filter, not system DND |
+| Multiple phones and PCs | Account authorization | **Partial.** One active phone per desktop; both ends can now refuse an automatic reconnect, but per-device routing is still needed before claiming multi-device |
 
-Feature sources:
-[setup and device features](https://support.microsoft.com/en-us/windows/apps/phonelink/phone-link-requirements-and-setup),
-[multiple devices](https://support.microsoft.com/en-US/Windows/Apps/phonelink/frequently-asked-questions-about-the-phone-link),
-[notification actions](https://support.microsoft.com/en-US/Windows/Apps/view-and-manage-mobile-notifications-on-your-pc),
-[SMS/MMS](https://support.microsoft.com/en-us/windows/apps/phonelink/send-and-receive-text-messages-from-your-pc),
-[photos](https://support.microsoft.com/en-US/Windows/Apps/PhoneLink/setting-up-photos-in-the-phone-link),
-[file and clipboard transfer](https://support.microsoft.com/en-us/windows/apps/phonelink/seamlessly-transfer-content-between-your-devices),
-[media controls](https://support.microsoft.com/id-ID/Windows/Apps/PhoneLink/setting-up-notifications-in-the-phone-link),
-[hotspot](https://support.microsoft.com/en-us/windows/experience/connectivity-networking/instant-hotspot),
-[keyboard/device controls](https://support.microsoft.com/en-us/windows/apps/phonelink/keyboard-shortcuts-for-phone-link).
+## Where the remaining difference actually matters
+
+Most of the missing rows are missing on purpose. FocusBridge is a notification
+triage tool, not a phone mirror, and half-building SMS or screen streaming would
+make it worse at the thing it is for.
+
+One row is a genuine gap rather than a scope decision:
+
+**Notification actions.** Phone Link lets you reply to a message and dismiss a
+notification from the PC, and the dismissal reaches the phone. FocusBridge can
+show a notification and delete it from desktop history, but the phone never
+hears about it, so the same alert is still waiting on the phone afterwards. For
+an app whose entire purpose is not picking the phone up, that is the wrong
+ending: triage on the desktop should be able to finish the job.
+
+This needs Android `RemoteInput` and notification action handling, a versioned
+command with a stable identifier so a retry cannot send a reply twice, and a
+clear separation in the UI between "clear from this list" and "dismiss on my
+phone" — which today are the same button and mean the weaker of the two.
 
 ## Concrete source findings
 
