@@ -43,6 +43,7 @@ pub struct AppState {
     relay_requested: Arc<AtomicBool>,
     relay_wake: Arc<Notify>,
     relay_idle_reason: Arc<Mutex<Option<String>>>,
+    enrollment_armed: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -56,7 +57,25 @@ impl AppState {
             relay_requested: Arc::new(AtomicBool::new(false)),
             relay_wake: Arc::new(Notify::new()),
             relay_idle_reason: Arc::new(Mutex::new(None)),
+            enrollment_armed: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Allows the next phone to enroll, replacing any pinned identity.
+    ///
+    /// Armed only when the user generates a fresh pairing code, and cleared as
+    /// soon as a phone takes it, so a known phone authenticates on every later
+    /// connection rather than silently re-enrolling.
+    pub fn arm_enrollment(&self) {
+        self.enrollment_armed.store(true, Ordering::Release);
+    }
+
+    pub fn enrollment_armed(&self) -> bool {
+        self.enrollment_armed.load(Ordering::Acquire)
+    }
+
+    pub fn disarm_enrollment(&self) {
+        self.enrollment_armed.store(false, Ordering::Release);
     }
 
     /// True when this is a new reason, so it is worth saying out loud.
@@ -75,14 +94,21 @@ impl AppState {
     /// Asks the relay client to connect now, even when automatic connection is
     /// off. This is how "reconnect this phone" reaches a phone on another
     /// network: neither device can dial the other, so both meet at the relay.
-    pub fn request_relay_connection(&self) {
+    pub fn request_relay_connection(&self, reason: &str) {
+        // Say who asked. Without this, an unexpected connection is impossible to
+        // attribute, and the reconnection preference looks like it is ignored.
+        tracing::info!(reason, "relay connection requested");
         // The next idle reason is worth repeating: circumstances just changed.
         *self
             .relay_idle_reason
             .lock()
             .expect("relay idle lock poisoned") = None;
         self.relay_requested.store(true, Ordering::Release);
-        self.relay_wake.notify_waiters();
+        // notify_one stores a permit when nobody is parked yet. notify_waiters
+        // does not, so a request arriving in the gap between the supervisor
+        // testing the flag and parking was dropped, leaving it asleep forever
+        // with the request still pending: pressing the button did nothing.
+        self.relay_wake.notify_one();
     }
 
     pub fn take_relay_request(&self) -> bool {
@@ -94,8 +120,18 @@ impl AppState {
     }
 
     /// Waits until someone asks for a connection.
+    /// Waits for a request, rechecking periodically.
+    ///
+    /// The timeout is a safety net, not the mechanism: a permit wakes this
+    /// immediately. It exists so that no future lost wakeup can strand the
+    /// supervisor indefinitely, which is a bad failure because it looks exactly
+    /// like the feature being broken.
     pub async fn await_relay_request(&self) {
-        self.relay_wake.notified().await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.relay_wake.notified(),
+        )
+        .await;
     }
 
     pub fn set_pairing(&self, session: PairingSession) {

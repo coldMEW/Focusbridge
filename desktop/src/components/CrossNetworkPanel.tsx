@@ -134,8 +134,9 @@ export default function CrossNetworkPanel() {
               Reconnect to the last phone automatically
             </strong>
             <br />
-            Off, this PC waits until you pick a phone under Previous connections, or show a new QR.
-            Useful when more than one phone is paired.
+            Off, this PC will not reach out on its own. Pick a phone under Previous connections,
+            or press Refresh on the pairing screen, when you want it to be found. Useful when more
+            than one phone is paired.
           </span>
         </label>
       )}

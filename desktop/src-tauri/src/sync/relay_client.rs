@@ -63,9 +63,13 @@ pub async fn start(state: AppState, local_port: u16) {
             idle_once(
                 &state,
                 "waiting: automatic reconnection is off, so this PC joins the relay \
-                 only when you pick a phone or show a pairing code",
+                 only when you pick a saved phone or press refresh on the pairing screen",
             );
             state.await_relay_request().await;
+            // Re-evaluate rather than falling through: the wait also returns on
+            // its safety-net timeout, and connecting then would be exactly the
+            // automatic reconnection the user turned off.
+            continue;
         }
         match attempt(&state, local_port).await {
             Ok(true) => backoff = MIN_BACKOFF,
@@ -177,28 +181,23 @@ async fn run_session(
     local_port: u16,
 ) -> Result<()> {
     let pair_bytes = pair_id_bytes(&pair.pair_id)?;
-    // A pairing screen showing an unexpired code is the user asking to pair a
-    // phone, exactly as on the LAN, and that is what authorizes enrollment. An
-    // expired session is not authorization: without a deliberate, current
-    // gesture an unknown phone gets no session at all.
+    // A phone that is already pinned proves that identity on every connection.
+    // Enrollment is the exception, and it is armed only when the user asks for a
+    // phone by generating a fresh pairing code: reusing that state on every
+    // reconnect would re-enroll a known phone instead of authenticating it, and
+    // simply having the pairing screen open is not a request to replace anything.
     //
-    // It also authorizes replacing an already-pinned phone. Otherwise a phone
-    // that was reset, replaced or reinstalled could never pair with this PC
-    // again: its identity key is new, so the pinned one would reject every
-    // handshake and the only remedy would be deleting the relay pair by hand.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or_default();
-    let pairing_open = state
-        .current_pairing()
-        .is_some_and(|session| session.expires_at > now);
-    if secrets.phone.is_none() && !pairing_open {
-        bail!("no phone is enrolled for this relay pair; open the desktop pairing screen");
-    }
-    let mut session = match secrets.phone {
-        Some(phone) if !pairing_open => Session::desktop(identity, &secrets.psk, pair_bytes, phone),
-        _ => Session::desktop_enrollment(identity, &secrets.psk, pair_bytes),
+    // Arming it does authorize replacing an already-pinned phone, because a
+    // handset that was reset, replaced or reinstalled has a new identity key and
+    // could otherwise never pair with this PC again.
+    // A pinned phone authenticates on every connection. Enrollment happens only
+    // when the user has asked for a phone by generating a fresh pairing code.
+    let mut session = match (secrets.phone, state.enrollment_armed()) {
+        (Some(phone), false) => Session::desktop(identity, &secrets.psk, pair_bytes, phone),
+        (_, true) => Session::desktop_enrollment(identity, &secrets.psk, pair_bytes),
+        (None, false) => {
+            bail!("no phone is enrolled for this relay pair; open the desktop pairing screen")
+        }
     }
     .context("start the secure session")?;
 
@@ -224,6 +223,8 @@ async fn run_session(
         // Persist the pin before confirming, so a crash cannot leave a phone that
         // believes it is enrolled while this PC would re-open enrollment.
         relay_identity::approve_phone(&state.db_path, &pair.pair_id, peer)?;
+        // One code, one enrollment. Later reconnects must prove this identity.
+        state.disarm_enrollment();
         session
             .approve_enrollment(peer, binding)
             .map_err(|error| anyhow::anyhow!("enrollment approval failed: {error}"))?;
@@ -337,6 +338,19 @@ async fn bridge(
                             {
                                 socket.send(Message::Binary(sealed)).await.context("send relay frame")?;
                             }
+                        }
+                        Message::Ping(payload) => {
+                            // The local server probes the transport every few
+                            // seconds and closes the session if it goes
+                            // unanswered. Replying here rather than relying on
+                            // the queued automatic pong, which is only flushed
+                            // when this side happens to write, and a quiet phone
+                            // gives it nothing to write for far longer than the
+                            // probe allows.
+                            local
+                                .send(Message::Pong(payload))
+                                .await
+                                .context("answer the local transport probe")?;
                         }
                         Message::Close(_) => bail!("local server closed the session"),
                         // The local server's transport probes stop at this bridge.

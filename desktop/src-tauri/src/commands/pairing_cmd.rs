@@ -116,8 +116,17 @@ pub(crate) fn local_ipv4_candidates() -> Vec<String> {
     candidates
 }
 
+/// Builds the pairing code.
+///
+/// `for_pairing` separates the user actually pairing a phone from the preview
+/// that sits beside the inbox. Only the former is a request to be reachable or
+/// to let a new phone enroll; the preview renders on every launch, and treating
+/// that as intent would quietly override the reconnection preference.
 #[tauri::command]
-pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput, String> {
+pub fn generate_pairing_qr(
+    for_pairing: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<QrOutput, String> {
     let now = now_millis();
     let existing = state
         .current_pairing()
@@ -130,6 +139,11 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
         .as_ref()
         .map(|session| session.pairing_key.clone())
         .unwrap_or_else(random_hex_256);
+    // A brand new session on the pairing screen means the user asked to pair a
+    // phone. Re-rendering reuses the existing session and must not re-arm.
+    if for_pairing && existing.is_none() {
+        state.arm_enrollment();
+    }
     let endpoint_candidates = local_ipv4_candidates();
     let endpoint = endpoint_candidates
         .first()
@@ -144,11 +158,12 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
     // the phone could not authenticate to.
     let (relay, noise) = relay_pairing_blocks(&state);
     // A phone that scans this code may only be able to reach this PC through the
-    // relay, and it cannot dial the PC directly. Showing the code is therefore
-    // also a request to be present at the relay, whatever the automatic
-    // reconnection preference says: the user is asking for a phone right now.
-    if relay.is_some() {
-        state.request_relay_connection();
+    // relay, and it cannot dial the PC directly, so showing the code on the
+    // pairing screen is also a request to be present at the relay. That is a
+    // deliberate act and overrides the reconnection preference; the inbox
+    // preview is not, and must not.
+    if for_pairing && relay.is_some() {
+        state.request_relay_connection("the pairing screen is showing a code");
     }
     let payload = QrPayload {
         v: if relay.is_some() { 2 } else { 1 },
@@ -307,7 +322,7 @@ pub fn request_device_reconnect(
         .map_err(|error| error.to_string())?
         .is_some()
     {
-        state.request_relay_connection();
+        state.request_relay_connection("the user asked to reconnect a saved phone");
         return Ok("Waiting for your phone to accept. It can be on any network.".into());
     }
     Err("Phone is offline. Open FocusBridge on Android, then scan the QR or paste the manual payload.".into())

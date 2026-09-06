@@ -51,7 +51,7 @@ pub fn relay_set_auto_connect(
     relay_api::set_auto_connect(&state.db_path, enabled).map_err(|error| error.to_string())?;
     if enabled {
         // Do not make the user wait for the next retry tick to see it work.
-        state.request_relay_connection();
+        state.request_relay_connection("automatic reconnection was turned on");
     }
     status(&state)
 }

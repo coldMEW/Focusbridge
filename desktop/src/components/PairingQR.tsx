@@ -13,11 +13,16 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const refreshQr = () => {
+  // `deliberate` means the user pressed the button, and only that makes this PC
+  // reachable over the relay. The panel also renders on load, on window focus
+  // and on a timer, and treating any of those as intent would connect this PC
+  // to the last phone behind the user's back whenever the pairing view happened
+  // to be on screen - which is exactly what the reconnection switch forbids.
+  const refreshQr = (deliberate = false) => {
     let alive = true;
     setRefreshing(true);
     setError(null);
-    invoke<QrData>("generate_pairing_qr")
+    invoke<QrData>("generate_pairing_qr", { forPairing: deliberate && !compact })
       .then((d) => {
         if (alive) setQr(d);
       })
@@ -42,11 +47,12 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
         return current;
       });
     };
-    window.addEventListener("focus", refreshQr);
+    const refreshOnFocus = () => refreshQr();
+    window.addEventListener("focus", refreshOnFocus);
     const timer = window.setInterval(refreshIfStale, 15_000);
     return () => {
       dispose();
-      window.removeEventListener("focus", refreshQr);
+      window.removeEventListener("focus", refreshOnFocus);
       window.clearInterval(timer);
     };
   }, []);
@@ -89,7 +95,7 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
             />
           </div>
           <button
-            onClick={refreshQr}
+            onClick={() => refreshQr(true)}
             disabled={refreshing}
             className="rounded-full bg-text-primary px-4 py-2 text-sm font-semibold text-bg-primary transition hover:bg-accent-study disabled:cursor-wait disabled:opacity-60"
           >
