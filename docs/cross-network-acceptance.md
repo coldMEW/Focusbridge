@@ -57,12 +57,32 @@ usually lies to the user.
 
 ## Result
 
-- Date:
-- Phone network / PC network:
-- Connected over relay: yes / no
-- Notification delivered off-LAN: yes / no
-- Failure paths that behaved: 
-- Anything that broke: 
+**2026-09-06: the relay path works.** Pixel 7 on cellular only (no Wi-Fi,
+carrier CGNAT address `100.74.35.184/32` on `rmnet1`), Windows PC on Wi-Fi at
+`192.168.4.23`.
+
+Observed, in order:
+
+1. The phone tried both LAN candidates first and both timed out after 10s, as
+   they must from mobile data: `172.29.176.1:9173` and `192.168.4.23:9173`.
+2. It then dialed the relay and got `101 Switching Protocols` from
+   `focusbridge-relay.focusbridge.workers.dev`.
+3. Desktop logged `relay socket established`, then
+   `relay secure session ready`, then `phone authenticated`.
+4. The desktop recorded the device as `Google Pixel 7 - relay`, so the
+   transport label is honest and not reported as a LAN session.
+5. Sockets held for the observed period with no errors: the relay connection to
+   `104.21.22.80:443` and the pinned loopback bridge on 9173, both established.
+
+### Still to run
+
+- Notification delivery end to end while off-LAN, observed on the desktop.
+- One flap was seen earlier in the session: a relay session authenticated and
+  then dropped during pairing churn, and the desktop then waited for a
+  `relay.peer_ready` that does not repeat while the phone's socket stays open.
+  It recovered on reconnect, but the desktop should recover without depending
+  on the phone noticing first. Watch for this during the endurance run.
+- The whole failure-path table above.
 
 ## If it does not connect
 
