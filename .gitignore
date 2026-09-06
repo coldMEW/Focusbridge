@@ -11,6 +11,7 @@ target/
 Cargo.lock
 !relay/Cargo.lock
 !desktop/Cargo.lock
+!shared/secure-channel/Cargo.lock
 
 # Android
 android/.gradle/
@@ -37,7 +38,18 @@ Thumbs.db
 *.jks
 .env
 .env.local
+.wrangler/
+.dev.vars
+.dev.vars.*
 
 # OMC scratch
 .omc/
 .claude/
+
+# Wrangler / relay worker local state
+relay-worker/.npm-cache/
+relay-worker/.local-home/
+relay-worker/dist/
+
+# The shared Noise engine is built with --locked, so its lockfile is required.
+!shared/secure-channel-jni/Cargo.lock

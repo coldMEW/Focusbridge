@@ -1,0 +1,21 @@
+{
+  "name": "focusbridge-relay-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=browser --external:cloudflare:workers --outdir=dist"
+  },
+  "dependencies": { "jose": "6.2.11" },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.4",
+    "@cloudflare/workers-types": "5.20260905.1",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.129.0"
+  }
+}
