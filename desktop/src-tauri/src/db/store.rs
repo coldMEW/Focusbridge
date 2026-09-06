@@ -4,13 +4,11 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::Path;
 
+use super::encrypted;
 use super::models::{AppRuleRow, NotificationRow, PairedDeviceRow};
 
 pub fn init(db_path: &Path) -> Result<()> {
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).context("create app data directory")?;
-    }
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
         .context("apply desktop sqlite schema")?;
     ensure_app_rule_icon_column(&conn)?;
@@ -20,7 +18,7 @@ pub fn init(db_path: &Path) -> Result<()> {
 
 pub fn upsert_notification(db_path: &Path, payload: &Value) -> Result<NotificationRow> {
     let row = notification_from_payload(payload);
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     upsert_app_seen(
         &conn,
         &row.package_name,
@@ -57,7 +55,7 @@ pub fn upsert_notification(db_path: &Path, payload: &Value) -> Result<Notificati
 }
 
 pub fn notification_exists(db_path: &Path, id: &str) -> Result<bool> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.query_row(
         "SELECT 1 FROM notifications WHERE id = ?1 LIMIT 1",
         params![id],
@@ -69,7 +67,7 @@ pub fn notification_exists(db_path: &Path, id: &str) -> Result<bool> {
 }
 
 pub fn list_app_rules(db_path: &Path) -> Result<Vec<AppRuleRow>> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     let mut stmt = conn
         .prepare(
             "SELECT package_name, label, category, icon_data_url, notifications_seen, last_seen_at, muted, priority, study_safe, updated_at
@@ -99,7 +97,7 @@ pub fn set_app_rule_flag(
         "study_safe" => "study_safe",
         other => anyhow::bail!("unsupported app rule flag: {other}"),
     };
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute(
         "INSERT INTO app_rules (package_name, label, category, updated_at)
          VALUES (?1, ?1, 'other', ?2)
@@ -179,7 +177,7 @@ pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRule
         }
     }
 
-    let mut conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let mut conn = encrypted::open(db_path)?;
     let tx = conn.transaction().context("begin app inventory snapshot")?;
     // Keep absent rows as archived preferences, including across reinstalls.
     tx.execute("UPDATE app_rules SET inventory_present = 0", [])
@@ -234,7 +232,7 @@ pub fn save_app_inventory(db_path: &Path, payload: &Value) -> Result<Vec<AppRule
 }
 
 pub fn mark_status(db_path: &Path, id: &str, status: &str) -> Result<()> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute(
         "UPDATE notifications SET status = ?1 WHERE id = ?2",
         params![status, id],
@@ -244,13 +242,13 @@ pub fn mark_status(db_path: &Path, id: &str, status: &str) -> Result<()> {
 }
 
 pub fn delete_notification(db_path: &Path, id: &str) -> Result<usize> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute("DELETE FROM notifications WHERE id = ?1", params![id])
         .context("delete notification")
 }
 
 pub fn list_notifications(db_path: &Path, limit: i64) -> Result<Vec<NotificationRow>> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     let mut stmt = conn
         .prepare(
             "SELECT
@@ -284,7 +282,7 @@ pub fn list_notifications(db_path: &Path, limit: i64) -> Result<Vec<Notification
 }
 
 pub fn clear_notifications_between(db_path: &Path, start_ms: i64, end_ms: i64) -> Result<usize> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute(
         "DELETE FROM notifications WHERE MIN(timestamp, received_at) >= ?1 AND MIN(timestamp, received_at) < ?2",
         params![start_ms, end_ms],
@@ -297,7 +295,7 @@ pub fn dismiss_notification(db_path: &Path, id: &str) -> Result<()> {
 }
 
 pub fn clear_notifications_older_than(db_path: &Path, cutoff_ms: i64) -> Result<usize> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute(
         "DELETE FROM notifications WHERE MIN(timestamp, received_at) < ?1",
         params![cutoff_ms],
@@ -306,13 +304,13 @@ pub fn clear_notifications_older_than(db_path: &Path, cutoff_ms: i64) -> Result<
 }
 
 pub fn clear_all_notifications(db_path: &Path) -> Result<usize> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute("DELETE FROM notifications", [])
         .context("clear all notifications")
 }
 
 pub fn set_setting(db_path: &Path, key: &str, value: &str) -> Result<()> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -323,7 +321,7 @@ pub fn set_setting(db_path: &Path, key: &str, value: &str) -> Result<()> {
 }
 
 pub fn get_setting(db_path: &Path, key: &str) -> Result<Option<String>> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.query_row(
         "SELECT value FROM settings WHERE key = ?1",
         params![key],
@@ -351,7 +349,7 @@ pub fn save_pairing(
     endpoint: &str,
     cert_fingerprint: &str,
 ) -> Result<()> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute("UPDATE paired_devices SET is_active = 0", [])
         .context("deactivate previous pairings")?;
     conn.execute(
@@ -381,7 +379,7 @@ pub fn saved_pairing_key_for_device(
     device_id: &str,
     presented_pairing_key: &str,
 ) -> Result<Option<String>> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.query_row(
         "SELECT pairing_key FROM paired_devices WHERE device_id = ?1 AND pairing_key = ?2 LIMIT 1",
         params![device_id, presented_pairing_key],
@@ -399,7 +397,7 @@ pub fn mark_pairing_connected(
     endpoint: &str,
     cert_fingerprint: &str,
 ) -> Result<()> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     let now = now_millis();
     conn.execute("UPDATE paired_devices SET is_active = 0", [])
         .context("deactivate previous pairings")?;
@@ -436,14 +434,14 @@ pub fn mark_pairing_connected(
 }
 
 pub fn mark_pairings_disconnected(db_path: &Path) -> Result<()> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute("UPDATE paired_devices SET is_active = 0", [])
         .context("mark paired devices disconnected")?;
     Ok(())
 }
 
 pub fn list_paired_devices(db_path: &Path) -> Result<Vec<PairedDeviceRow>> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     let mut stmt = conn
         .prepare(
             "SELECT id, device_name, device_id, pairing_key, mode, endpoint, cert_fingerprint, is_active, created_at, last_connected_at
@@ -472,7 +470,7 @@ pub fn list_paired_devices(db_path: &Path) -> Result<Vec<PairedDeviceRow>> {
 }
 
 pub fn delete_paired_device(db_path: &Path, device_id: &str) -> Result<usize> {
-    let conn = Connection::open(db_path).context("open desktop sqlite database")?;
+    let conn = encrypted::open(db_path)?;
     conn.execute(
         "DELETE FROM paired_devices WHERE device_id = ?1",
         params![device_id],
