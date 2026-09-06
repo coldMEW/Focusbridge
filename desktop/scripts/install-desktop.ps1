@@ -23,8 +23,14 @@ param(
     [string]$Msi,
     [string]$Installed = 'C:\Program Files\FocusBridge\focusbridge-desktop.exe',
     # A string present in the new build and absent from the old one. Use it when
-    # verifying that a specific change actually shipped.
-    [string]$ExpectContains
+    # verifying that a specific change actually shipped -- but only a string that
+    # survives into the shipped binary. A literal that lives in a #[cfg(test)]
+    # block is not in the release build, and checking for one fails on a perfectly
+    # good install.
+    [string]$ExpectContains,
+    # The built executable to compare against. Comparing hashes is exact and needs
+    # no guess about which strings survive, so it is the default check.
+    [string]$BuiltExe
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,6 +60,11 @@ if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrat
 
 # Resolved here rather than in the param block, because Windows PowerShell
 # leaves $PSScriptRoot empty there when the script is invoked with -File.
+if (-not $BuiltExe) {
+    $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $BuiltExe = Join-Path $scriptRoot '..	arget
+eleaseocusbridge-desktop.exe'
+}
 if (-not $Msi) {
     $root = Split-Path -Parent $MyInvocation.MyCommand.Path
     $Msi = Join-Path $root '..\target\release\bundle\msi\FocusBridge_1.0.0_x64_en-US.msi'
@@ -89,6 +100,18 @@ Write-Host 'Installing...'
 $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$Msi`"", '/qn', '/norestart' -Wait -PassThru
 if ($p.ExitCode -ne 0) { throw "Install failed with exit code $($p.ExitCode)." }
 if (-not (Test-Path $Installed)) { throw "Install reported success but $Installed is missing." }
+
+# The exact check: the file that was installed must be the file that was built.
+if (Test-Path $BuiltExe) {
+    $built = (Get-FileHash $BuiltExe -Algorithm SHA256).Hash
+    $live = (Get-FileHash $Installed -Algorithm SHA256).Hash
+    if ($built -ne $live) {
+        throw "The installed binary is not the one just built. Built $built, installed $live."
+    }
+    Write-Host "Verified the installed binary matches the build ($($built.Substring(0,16))...)."
+} else {
+    Write-Warning "No built executable at $BuiltExe to compare against; skipping the hash check."
+}
 
 if ($ExpectContains) {
     $bytes = [System.IO.File]::ReadAllBytes($Installed)
