@@ -5,6 +5,7 @@ import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.data.repository.PairingRepository
 import com.focusbridge.android.data.repository.ConfigRepository
 import com.focusbridge.android.pairing.DeviceInfo
+import android.util.Log
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
@@ -140,13 +141,24 @@ class SyncEngine @Inject constructor(
     }
 
     suspend fun send(notification: NotificationEntity) {
-        if (isManuallyDisconnected()) return
+        // A live session outranks a stale disconnect. Checking the flag first meant
+        // that a phone which had once been disconnected, and had since reconnected,
+        // dropped every notification here while showing itself as connected and
+        // synced -- the worst kind of failure, because nothing looks wrong.
+        if (!client.isConnected() && isManuallyDisconnected()) {
+            Log.i(TAG, "holding a notification: this phone is disconnected")
+            return
+        }
         if (!client.isConnected()) {
             connectActivePairing(flushAfterConnect = false)
         }
         if (client.send(Protocol.notification(notification))) return
+        // One retry on a fresh connection; the row stays pending either way and
+        // the supervisor flushes it when a session comes back.
         connectActivePairing(flushAfterConnect = false)
-        client.send(Protocol.notification(notification))
+        if (!client.send(Protocol.notification(notification))) {
+            Log.w(TAG, "could not send a notification; it stays pending")
+        }
     }
 
     suspend fun flushPending() {
@@ -187,6 +199,7 @@ class SyncEngine @Inject constructor(
         client.isManuallyDisconnected() || config.get("manual_disconnect") == "true"
 
     companion object {
+        private const val TAG = "FocusBridgeSync"
         const val AUTO_RECONNECT_KEY = "auto_reconnect"
         const val CONNECT_TIMEOUT_MS = 4_000L
         // The relay adds a round trip to Cloudflare plus a full Noise handshake and

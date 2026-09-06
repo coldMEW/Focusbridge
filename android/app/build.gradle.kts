@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +7,22 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     alias(libs.plugins.google.services)
+}
+
+/**
+ * Release signing credentials, when they are available on this machine.
+ *
+ * Looked for at `FOCUSBRIDGE_KEYSTORE_PROPERTIES`, or beside the checkout at
+ * `../../FocusBridge-signing/keystore.properties`. Absent, the build still works
+ * and signs with the debug key; present, it produces something installable by
+ * real users. Losing this keystore means never being able to update the app, so
+ * it lives outside the repository and outside anything that gets shared.
+ */
+val releaseSigning: Properties? = run {
+    val fromEnv = System.getenv("FOCUSBRIDGE_KEYSTORE_PROPERTIES")?.let { file(it) }
+    val beside = rootProject.file("../../FocusBridge-signing/keystore.properties")
+    val source = listOfNotNull(fromEnv, beside).firstOrNull { it.exists() } ?: return@run null
+    Properties().apply { source.inputStream().use { load(it) } }
 }
 
 android {
@@ -40,10 +58,30 @@ android {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
     }
 
+    signingConfigs {
+        // Release signing material never lives in the repository. The properties
+        // file points at a keystore kept outside it, and the build falls back to
+        // the debug key when it is absent, so a checkout still builds -- but a
+        // release built that way is only ever for testing, because the debug key
+        // is shared by every Android SDK on earth.
+        if (releaseSigning != null) {
+            create("release") {
+                storeFile = file(releaseSigning.getProperty("storeFile"))
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (releaseSigning != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

@@ -15,9 +15,9 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
 tokio = { version = "1.36", features = ["full"] }
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
-tokio-rustls = "0.25"
-rustls = "0.22"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
 rustls-pemfile = "2.1"
 rcgen = "0.12"
 qrcode = "0.14"

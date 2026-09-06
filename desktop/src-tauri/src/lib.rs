@@ -18,6 +18,19 @@ use tauri::{Emitter, Manager, WindowEvent};
 use tracing::info;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Chooses the TLS implementation before anything opens a connection.
+///
+/// From rustls 0.23 a process must say which provider it wants when more than one
+/// could be linked, and asking later panics on whichever worker thread got there
+/// first. Every test passed without this: the panic only appears once a real TLS
+/// connection is made, which is to say once the app is actually used. So it is
+/// installed here, at the top of startup, before the listener or the relay client
+/// exists.
+fn install_crypto_provider() {
+    // An error means a provider is already installed, which is equally fine.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 pub fn run() {
     configure_platform_identity();
 
@@ -25,6 +38,8 @@ pub fn run() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init()
         .ok();
+
+    install_crypto_provider();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -129,4 +144,23 @@ fn minimize_to_tray(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+#[cfg(test)]
+mod tls_provider_tests {
+    /// The upgrade to rustls 0.23 made this a runtime panic on a worker thread
+    /// rather than a compile error, and every existing test still passed. This one
+    /// fails if the choice is ever dropped again.
+    #[test]
+    fn a_tls_provider_is_chosen_before_any_connection_is_made() {
+        super::install_crypto_provider();
+        assert!(
+            rustls::crypto::CryptoProvider::get_default().is_some(),
+            "no TLS provider installed; every TLS connection would panic"
+        );
+        // Building a client config is the operation that panicked in the field.
+        let _ = rustls::ClientConfig::builder()
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
+    }
 }

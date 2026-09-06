@@ -55,6 +55,17 @@ because the PC asked deliberately; what R2 forbids is the PC reaching out unaske
 | A LAN-only pairing goes fully offline on disconnect, because there is no way to be asked | `SyncEngineTest` (no relay case) |
 | One prompt per arrival, not one per relay event | `alreadyAsking` dedupe in `WebSocketClient` |
 | The phone shows disconnected when the desktop disconnects | heartbeat + `UNPAIR` handling |
+| An authenticated session ends the manual disconnect, so the two states cannot disagree | `WebSocketClient` clears it on `AUTH_OK` |
+| A connected phone sends notifications even if a disconnect flag was never cleared | `SyncEngineTest.aConnectedPhoneSendsEvenIfADisconnectWasNeverCleared` |
+| A genuinely disconnected phone holds notifications as pending rather than dropping them | `SyncEngineTest.aDisconnectedPhoneHoldsNotificationsInsteadOfSending` |
+
+## Notifications
+
+| Behaviour | Verified by |
+|---|---|
+| A notification captured on the phone reaches the desktop | Real device: `captured 1 from <app>` on the phone, `notification received app=<app> stored=true` on the desktop, ~200ms apart |
+| Every drop on the path is visible, so "nothing arrives on the PC" can be answered rather than guessed | `FocusBridgeSync` log lines on the phone, `notification received` on the desktop; no message content is logged |
+| The minified release build keeps the capture path working | Release APK on a device: capture logged, no serialization or reflection failure |
 
 ## Security
 
@@ -64,3 +75,8 @@ because the PC asked deliberately; what R2 forbids is the PC reaching out unaske
 | The database is unreadable without the key, WAL and sidecars included | `encrypted_database` suite, against an independent SQLite build |
 | The unauthenticated connection ceiling holds | `MAX_UNAUTHENTICATED_CONNECTIONS`; measured 179/200 refused |
 | Relay pair provisioning requires a verified Firebase identity | relay worker suite |
+| A TLS provider is chosen before any connection is made | `tls_provider_tests::a_tls_provider_is_chosen_before_any_connection_is_made`; rustls 0.23 turns a missing choice into a runtime panic that no other test catches |
+| The webview runs under a Content Security Policy, and holds no permission it does not use | `tauri.conf.json` security.csp; capabilities list |
+| Release builds are signed with a private key kept outside the repository | `:app:signingReport` shows the FocusBridge key for the release variant |
+| Dependency advisories are checked | `pnpm audit --prod` clean; `cargo audit` — remaining items are Windows-toast XML parsing of our own content and crates not compiled for this target |
+| The relay rejects unauthenticated sockets before the upgrade, and bad roles and query strings outright | live probes: 401 / 404 / 400 |

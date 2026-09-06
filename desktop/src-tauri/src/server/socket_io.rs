@@ -66,7 +66,7 @@ where
                 accept_during_work(frame, heartbeat, pending, &mut on_pong)?;
             }
             if let Some(token) = heartbeat.probe(Instant::now()) {
-                send_frame_before(socket, Message::Ping(token), heartbeat.deadline()).await?;
+                send_frame_before(socket, Message::Ping(token.into()), heartbeat.deadline()).await?;
             }
             tokio::select! {
                 biased;
@@ -116,7 +116,7 @@ where
 {
     send_frame_before(
         socket,
-        Message::Text(body),
+        Message::Text(body.into()),
         Instant::now() + Duration::from_secs(10),
     )
     .await

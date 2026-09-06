@@ -379,6 +379,12 @@ class WebSocketClient @Inject constructor(
             MessageType.AUTH_OK -> {
                 if (!relayTransport) secureReady = secureTransport
                 lastPongAt = System.currentTimeMillis()
+                // An authenticated session ends the disconnect, whether the user
+                // accepted a request or the switch let this through silently.
+                // Holding both states at once is not a subtlety: the phone shows
+                // connected while every notification is dropped before it is sent,
+                // because the send path checks the disconnect first.
+                if (manuallyDisconnected) setManualDisconnect(false)
                 updateState(serial, ConnectionState.CONNECTED)
                 startHeartbeat(webSocket, pairing.pairingKey, serial)
                 sendAppInventory(webSocket, pairing.pairingKey, serial)

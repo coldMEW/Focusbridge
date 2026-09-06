@@ -79,12 +79,12 @@ async fn websocket_control_probe_receives_matching_automatic_pong() {
     let mut phone = WebSocketStream::from_raw_socket(right, Role::Client, None).await;
     let mut health = heartbeat::PeerHeartbeat::new(tokio::time::Instant::now());
     let token = health.probe(tokio::time::Instant::now()).unwrap();
-    socket_io::send_frame_before(&mut server, Message::Ping(token.clone()), health.deadline())
+    socket_io::send_frame_before(&mut server, Message::Ping(token.clone().into()), health.deadline())
         .await
         .unwrap();
     assert_eq!(
         phone.next().await.unwrap().unwrap(),
-        Message::Ping(token.clone())
+        Message::Ping(token.clone().into())
     );
     phone.flush().await.unwrap();
     let pong = tokio::time::timeout_at(health.deadline(), server.next())
@@ -92,7 +92,7 @@ async fn websocket_control_probe_receives_matching_automatic_pong() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(pong, Message::Pong(token.clone()));
+    assert_eq!(pong, Message::Pong(token.clone().into()));
     assert!(health.acknowledge(&token, tokio::time::Instant::now()));
 }
 
@@ -216,7 +216,7 @@ async fn blocked_frame_write_uses_the_supplied_deadline() {
         std::time::Duration::from_secs(1),
         socket_io::send_frame_before(
             &mut socket,
-            Message::Text("x".repeat(1024)),
+            Message::Text("x".repeat(1024).into()),
             tokio::time::Instant::now() + std::time::Duration::from_millis(50),
         ),
     )
@@ -237,7 +237,7 @@ async fn slow_work_services_actual_pongs_and_preserves_application_frame_order()
     let mut phone = WebSocketStream::from_raw_socket(right, Role::Client, None).await;
     let mut health = heartbeat::PeerHeartbeat::new(tokio::time::Instant::now());
     let token = health.probe(tokio::time::Instant::now()).unwrap();
-    socket_io::send_frame_before(&mut server, Message::Ping(token), health.deadline())
+    socket_io::send_frame_before(&mut server, Message::Ping(token.into()), health.deadline())
         .await
         .unwrap();
     phone.send(Message::Text("first".into())).await.unwrap();
@@ -284,7 +284,7 @@ fn pending_application_frames_are_bounded_by_count_and_bytes() {
     assert!(pending.push_back(Message::Text("overflow".into())).is_err());
     pending.clear();
     pending
-        .push_back(Message::Text("x".repeat(socket_io::MAX_PENDING_BYTES)))
+        .push_back(Message::Text("x".repeat(socket_io::MAX_PENDING_BYTES).into()))
         .unwrap();
     assert!(pending.push_back(Message::Text("x".into())).is_err());
     pending.pop_front();
@@ -337,7 +337,7 @@ async fn slow_batch_longer_than_response_timeout_keeps_servicing_control_frames(
         while let Some(frame) = phone.next().await {
             match frame.unwrap() {
                 Message::Ping(_) => phone.flush().await.unwrap(),
-                Message::Text(text) => assert_eq!(text, "ack"),
+                Message::Text(text) => assert_eq!(text.as_str(), "ack"),
                 _ => (),
             }
         }

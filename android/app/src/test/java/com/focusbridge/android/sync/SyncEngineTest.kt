@@ -1,5 +1,6 @@
 package com.focusbridge.android.sync
 
+import com.focusbridge.android.data.local.NotificationEntity
 import com.focusbridge.android.data.local.PairingEntity
 import com.focusbridge.android.data.repository.ConfigRepository
 import com.focusbridge.android.data.repository.NotificationRepository
@@ -224,6 +225,44 @@ class SyncEngineTest {
         } finally {
             job.cancelAndJoin()
         }
+    }
+
+    private val sampleNotification = NotificationEntity(
+        id = "n1",
+        appName = "Messages",
+        packageName = "com.example.messages",
+        sender = "A friend",
+        message = "hello",
+        timestamp = 1_788_720_000_000L,
+        receivedAt = 1_788_720_000_000L,
+    )
+
+    @Test fun aConnectedPhoneSendsEvenIfADisconnectWasNeverCleared() = runBlocking {
+        // The flag is persisted, so a phone that was disconnected once and has
+        // since reconnected can carry a stale "disconnected" while a session is
+        // live. Checking it before the session dropped every notification at the
+        // source, with the phone showing itself connected and synced -- nothing
+        // looked wrong anywhere.
+        coEvery { config.get("manual_disconnect") } returns "true"
+        every { client.isManuallyDisconnected() } returns true
+        every { client.isConnected() } returns true
+        every { client.send(any()) } returns true
+
+        engine.send(sampleNotification)
+
+        verify(exactly = 1) { client.send(any()) }
+    }
+
+    @Test fun aDisconnectedPhoneHoldsNotificationsInsteadOfSending() = runBlocking {
+        // With no session, the disconnect still governs: the row stays pending
+        // and is flushed when the user brings the phone back.
+        coEvery { config.get("manual_disconnect") } returns "true"
+        every { client.isManuallyDisconnected() } returns true
+        every { client.isConnected() } returns false
+
+        engine.send(sampleNotification)
+
+        verify(exactly = 0) { client.send(any()) }
     }
 
     @Test fun aManualDisconnectIsNotLiftedByTheReconnectionSwitch() = runBlocking {

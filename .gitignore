@@ -53,3 +53,7 @@ relay-worker/dist/
 
 # The shared Noise engine is built with --locked, so its lockfile is required.
 !shared/secure-channel-jni/Cargo.lock
+
+# Release signing material never belongs in the repository.
+*.jks
+keystore.properties

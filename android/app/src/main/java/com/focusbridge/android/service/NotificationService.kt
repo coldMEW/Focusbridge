@@ -1,6 +1,7 @@
 package com.focusbridge.android.service
 
 import android.service.notification.NotificationListenerService
+import android.util.Log
 import android.service.notification.StatusBarNotification
 import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.processor.NotificationProcessor
@@ -21,9 +22,22 @@ class NotificationService : NotificationListenerService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private companion object {
+        const val TAG = "FocusBridgeSync"
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val entities = processor.process(sbn)
-        if (entities.isEmpty()) return
+        // Every drop on this path was silent, so "nothing arrives on the PC" gave
+        // nothing to look at: no way to tell a filtered notification from one the
+        // listener never saw, or from one that was saved but never sent. The
+        // package name and a count are enough to tell those apart, and no message
+        // content is written to the log.
+        if (entities.isEmpty()) {
+            Log.i(TAG, "ignored a notification from " + sbn.packageName + " (filtered or muted)")
+            return
+        }
+        Log.i(TAG, "captured " + entities.size + " from " + sbn.packageName)
         scope.launch {
             entities.forEach { entity ->
                 notifications.save(entity)

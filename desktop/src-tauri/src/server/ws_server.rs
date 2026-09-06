@@ -135,7 +135,7 @@ where
             }
             _ = sleep_until(heartbeat.wake_at()), if active_pairing_key.is_some() => {
                 if let Some(token) = heartbeat.probe(Instant::now()) {
-                    send_frame_before(&mut ws, Message::Ping(token), heartbeat.deadline()).await?;
+                    send_frame_before(&mut ws, Message::Ping(token.into()), heartbeat.deadline()).await?;
                 }
                 continue;
             }
@@ -157,7 +157,7 @@ where
                     Some(key) => encrypt_envelope(key, &outbound).context("encrypt outbound envelope")?,
                     None => outbound,
                 };
-                send_frame_before(&mut ws, Message::Text(body), heartbeat.deadline())
+                send_frame_before(&mut ws, Message::Text(body.into()), heartbeat.deadline())
                     .await
                     .context("send outbound websocket message")?;
                 continue;
@@ -342,7 +342,7 @@ where
                     Some(key) => encrypt_envelope(key, &pong).context("encrypt pong envelope")?,
                     None => pong,
                 };
-                send_frame_before(&mut ws, Message::Text(body), heartbeat.deadline())
+                send_frame_before(&mut ws, Message::Text(body.into()), heartbeat.deadline())
                 .await
                 .context("send pong")?;
                 if state.is_current_phone_sender(&outbound_tx) {
@@ -469,6 +469,11 @@ fn apply_work_item(
                 return Ok(None);
             }
             let row = store::upsert_notification(&state.db_path, &payload)?;
+            // The other half of the phone's capture line. Between them, "nothing
+            // arrives on the PC" can be answered without guessing: either the
+            // phone never captured it, or it never got here. No message content
+            // is recorded, only where it came from.
+            info!(app = %row.package_name, stored = !existed, "notification received");
             if !current() {
                 return Ok(None);
             }
@@ -576,7 +581,7 @@ where
         Some(key) => encrypt_envelope(key, &ack).context("encrypt notification ack envelope")?,
         None => ack,
     };
-    send_frame_before(ws, Message::Text(body), deadline)
+    send_frame_before(ws, Message::Text(body.into()), deadline)
         .await
         .context("send notification ack")?;
     Ok(())

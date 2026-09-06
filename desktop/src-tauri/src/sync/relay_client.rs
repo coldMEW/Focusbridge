@@ -311,7 +311,7 @@ async fn next_binary(socket: &mut RelaySocket, deadline: Instant) -> Result<Vec<
         .context("relay socket closed during the handshake")?
         .context("read relay frame")?;
         match frame {
-            Message::Binary(bytes) => return Ok(bytes),
+            Message::Binary(bytes) => return Ok(bytes.to_vec()),
             Message::Text(text)
                 if control_type(&text).as_deref() == Some("relay.peer_unavailable") =>
             {
@@ -326,7 +326,7 @@ async fn next_binary(socket: &mut RelaySocket, deadline: Instant) -> Result<Vec<
 async fn send_binary(socket: &mut RelaySocket, frame: Vec<u8>, deadline: Instant) -> Result<()> {
     timeout(
         deadline.saturating_duration_since(Instant::now()),
-        socket.send(Message::Binary(frame)),
+        socket.send(Message::Binary(frame.into())),
     )
     .await
     .context("relay write timed out")?
@@ -356,7 +356,7 @@ async fn bridge(
                 .map_err(|error| anyhow::anyhow!("secure session expired: {error}"))?;
             tokio::select! {
                 _ = keepalive.tick() => {
-                    socket.send(Message::Ping(Vec::new())).await.context("relay keepalive")?;
+                    socket.send(Message::Ping(Default::default())).await.context("relay keepalive")?;
                 }
                 inbound = socket.next() => {
                     let Some(frame) = inbound else { bail!("relay socket closed") };
@@ -369,7 +369,7 @@ async fn bridge(
                             {
                                 let text = String::from_utf8(plaintext.to_vec())
                                     .context("phone sent a non-text record")?;
-                                local.send(Message::Text(text)).await.context("forward to the local server")?;
+                                local.send(Message::Text(text.into())).await.context("forward to the local server")?;
                             }
                         }
                         Message::Text(text) => {
@@ -389,7 +389,7 @@ async fn bridge(
                                 .seal_record(text.as_bytes())
                                 .map_err(|error| anyhow::anyhow!("seal failed: {error}"))?
                             {
-                                socket.send(Message::Binary(sealed)).await.context("send relay frame")?;
+                                socket.send(Message::Binary(sealed.into())).await.context("send relay frame")?;
                             }
                         }
                         Message::Ping(payload) => {
