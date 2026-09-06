@@ -157,24 +157,28 @@ async fn run_session(
     local_port: u16,
 ) -> Result<()> {
     let pair_bytes = pair_id_bytes(&pair.pair_id)?;
-    if secrets.phone.is_none() {
-        // Enrollment is authorized by the pairing screen being open with a live QR,
-        // exactly as on the LAN. An expired session is not authorization: without a
-        // deliberate, current pairing gesture an unknown phone gets no session at all.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis() as i64)
-            .unwrap_or_default();
-        let live = state
-            .current_pairing()
-            .is_some_and(|session| session.expires_at > now);
-        if !live {
-            bail!("no phone is enrolled for this relay pair; open the desktop pairing screen");
-        }
+    // A pairing screen showing an unexpired code is the user asking to pair a
+    // phone, exactly as on the LAN, and that is what authorizes enrollment. An
+    // expired session is not authorization: without a deliberate, current
+    // gesture an unknown phone gets no session at all.
+    //
+    // It also authorizes replacing an already-pinned phone. Otherwise a phone
+    // that was reset, replaced or reinstalled could never pair with this PC
+    // again: its identity key is new, so the pinned one would reject every
+    // handshake and the only remedy would be deleting the relay pair by hand.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default();
+    let pairing_open = state
+        .current_pairing()
+        .is_some_and(|session| session.expires_at > now);
+    if secrets.phone.is_none() && !pairing_open {
+        bail!("no phone is enrolled for this relay pair; open the desktop pairing screen");
     }
     let mut session = match secrets.phone {
-        Some(phone) => Session::desktop(identity, &secrets.psk, pair_bytes, phone),
-        None => Session::desktop_enrollment(identity, &secrets.psk, pair_bytes),
+        Some(phone) if !pairing_open => Session::desktop(identity, &secrets.psk, pair_bytes, phone),
+        _ => Session::desktop_enrollment(identity, &secrets.psk, pair_bytes),
     }
     .context("start the secure session")?;
 

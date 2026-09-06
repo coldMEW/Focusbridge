@@ -96,17 +96,17 @@ pub fn pair_secrets(db_path: &Path, pair_id: &str) -> Result<Option<PairSecrets>
     Ok(Some(PairSecrets { psk, phone }))
 }
 
-/// Pins the phone that completed enrollment. Refuses to overwrite a different
-/// phone: a second device must be enrolled through its own pair, so a stolen or
-/// replayed QR cannot silently take over an existing pairing.
+/// Pins the phone that completed enrollment.
+///
+/// Replacing an already-pinned phone is allowed, because the caller only reaches
+/// enrollment while the pairing screen is showing an unexpired code. That is the
+/// user deliberately pairing a phone, and it is what makes a reset or replaced
+/// handset able to pair with this PC again. Outside that window the pinned
+/// identity is required and this is never called.
 pub fn approve_phone(db_path: &Path, pair_id: &str, phone: [u8; 32]) -> Result<()> {
     let secrets = pair_secrets(db_path, pair_id)?.context("unknown relay pair")?;
-    match secrets.phone {
-        Some(existing) if existing != phone => {
-            bail!("another phone is already paired to this relay pair")
-        }
-        Some(_) => return Ok(()),
-        None => {}
+    if secrets.phone == Some(phone) {
+        return Ok(());
     }
     store::set_setting(
         db_path,
