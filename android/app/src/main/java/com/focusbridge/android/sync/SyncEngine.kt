@@ -28,14 +28,16 @@ class SyncEngine @Inject constructor(
     suspend fun maintainActivePairing() {
         while (currentCoroutineContext().isActive) {
             try {
-                // The switch is the only thing that decides whether this phone may
-                // be reconnected without being asked. An earlier manual disconnect
-                // must not keep asking forever once the user has turned automatic
-                // reconnection back on.
-                if (autoReconnectEnabled() && isManuallyDisconnected()) {
-                    client.acceptReconnectRequest()
-                }
-                if (client.isConnected()) {
+                // Disconnect means disconnect. A manual disconnect outranks the
+                // reconnection switch, which governs ordinary drops rather than a
+                // decision the user made; letting it lift one reconnected seconds
+                // after they asked for the opposite. Staying at the relay is no
+                // better, because the desktop's presence then prompts this phone
+                // over and over. Only the user resumes: accepting a request,
+                // pressing retry, or scanning a code.
+                if (isManuallyDisconnected()) {
+                    // Deliberately idle.
+                } else if (client.isConnected()) {
                     flushPending()
                 } else if (!client.isAwaitingPeer()) {
                     connectActivePairing()

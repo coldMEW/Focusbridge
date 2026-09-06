@@ -143,6 +143,8 @@ pub fn generate_pairing_qr(
     // phone. Re-rendering reuses the existing session and must not re-arm.
     if for_pairing && existing.is_none() {
         state.arm_enrollment();
+        // Asking for a fresh code is asking to pair, which resumes this pairing.
+        state.resume();
     }
     let endpoint_candidates = local_ipv4_candidates();
     let endpoint = endpoint_candidates
@@ -162,7 +164,7 @@ pub fn generate_pairing_qr(
     // pairing screen is also a request to be present at the relay. That is a
     // deliberate act and overrides the reconnection preference; the inbox
     // preview is not, and must not.
-    if relay.is_some() {
+    if relay.is_some() && !state.is_paused() {
         // Wake the relay supervisor so it re-evaluates: a live code means this PC
         // must be waiting where a phone that scans it can reach it. Who is then
         // let in is decided at authentication, not here.
@@ -325,6 +327,7 @@ pub fn request_device_reconnect(
         .map_err(|error| error.to_string())?
         .is_some()
     {
+        state.resume();
         state.allow_known_phone();
         state.request_relay_connection("the user asked to reconnect a saved phone");
         return Ok("Waiting for your phone to accept. It can be on any network.".into());

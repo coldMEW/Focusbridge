@@ -47,6 +47,7 @@ pub struct AppState {
     relay_idle_reason: Arc<Mutex<Option<String>>>,
     enrollment_armed: Arc<AtomicBool>,
     known_phone_allowed: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -62,7 +63,22 @@ impl AppState {
             relay_idle_reason: Arc::new(Mutex::new(None)),
             enrollment_armed: Arc::new(AtomicBool::new(false)),
             known_phone_allowed: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// True after the user disconnected the phone and before they asked for it
+    /// back. Disconnect has to mean disconnect: while this holds, nothing here
+    /// reaches for the phone, so it cannot be pulled back by a preference or by
+    /// the pairing screen simply being on display.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
+    }
+
+    /// Cleared only by an explicit request: picking a saved phone, or asking for
+    /// a fresh pairing code.
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::Release);
     }
 
     /// Lets a phone this PC already knows reattach once.
@@ -244,6 +260,10 @@ impl AppState {
     }
 
     pub fn mark_manual_disconnect(&self) {
+        self.paused.store(true, Ordering::Release);
+        // A pending allowance would let the phone straight back in.
+        self.known_phone_allowed.store(false, Ordering::Release);
+        self.relay_requested.store(false, Ordering::Release);
         self.clear_phone_sender();
         self.update_diagnostics(|diag| {
             diag.connected = false;

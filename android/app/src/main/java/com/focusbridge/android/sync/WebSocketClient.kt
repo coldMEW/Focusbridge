@@ -129,10 +129,9 @@ class WebSocketClient @Inject constructor(
         useRelay: Boolean = false,
         requireApproval: Boolean = false,
     ) {
-        // A connection that has to be approved carries no data until it is, so it
-        // is allowed while disconnected: that is how the PC reaches this phone to
-        // ask in the first place.
-        if (manuallyDisconnected && !requireApproval) return
+        // Nothing at all while the user has this paused, approval-gated or not:
+        // a socket held open would let the desktop keep asking.
+        if (manuallyDisconnected) return
         disconnect(showDisconnected = !retryingOnFailure)
         sessionJob = SupervisorJob()
         val serial = ++connectionSerial
@@ -255,9 +254,12 @@ class WebSocketClient @Inject constructor(
                 if (requireApproval) {
                     // Remember how to continue, then ask. Nothing is decrypted and
                     // no notification leaves this phone until the user accepts.
+                    val alreadyAsking = _reconnectRequest.value != null
                     pendingApproval = { startSecureSession(webSocket, pairing, serial, retryingOnFailure) }
                     _reconnectRequest.value = DesktopReconnectRequest(pairing.deviceId, System.currentTimeMillis())
-                    showReconnectNotification()
+                    // Notifying on every relay event is how one desktop becomes a
+                    // stream of identical notifications.
+                    if (!alreadyAsking) showReconnectNotification()
                 } else {
                     startSecureSession(webSocket, pairing, serial, retryingOnFailure)
                 }

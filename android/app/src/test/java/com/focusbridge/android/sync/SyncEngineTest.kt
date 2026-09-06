@@ -210,28 +210,6 @@ class SyncEngineTest {
         }
     }
 
-    @Test fun aDisconnectedPhoneStaysReachableSoThePcCanAskItBack() = runBlocking {
-        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
-        coEvery { config.get("manual_disconnect") } returns "true"
-        coEvery { pairings.active() } returns relayPairing
-        failEveryAttempt()
-
-        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
-        try {
-            // A PC on another network cannot dial this phone, so leaving the relay
-            // on disconnect made "reconnect this phone" impossible to deliver.
-            verify(atLeast = 1) {
-                client.connect(relayPairing, any(), any(), any(), useRelay = true, requireApproval = true)
-            }
-            // And it must not have opened a data path while disconnected.
-            verify(exactly = 0) {
-                client.connect(any(), any(), any(), any(), useRelay = any(), requireApproval = false)
-            }
-        } finally {
-            job.cancelAndJoin()
-        }
-    }
-
     @Test fun aDisconnectedPhoneWithNoRelayStaysOffTheNetwork() = runBlocking {
         coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
         coEvery { config.get("manual_disconnect") } returns "true"
@@ -240,17 +218,18 @@ class SyncEngineTest {
 
         val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
         try {
-            // Without relay credentials there is no way to be asked, so a LAN-only
-            // pairing must not start dialing behind a manual disconnect.
+            // A manual disconnect is total: no dialing, and no waiting at a relay
+            // to be asked either. Only the user resumes it.
             verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
         } finally {
             job.cancelAndJoin()
         }
     }
 
-    @Test fun autoReconnectOnNeverAsksEvenAfterAManualDisconnect() = runBlocking {
-        // The reported bug: the switch was on and every reconnection still asked,
-        // because an old manual disconnect kept forcing the approval path.
+    @Test fun aManualDisconnectIsNotLiftedByTheReconnectionSwitch() = runBlocking {
+        // Disconnect has to mean disconnect. The switch governs ordinary drops,
+        // not a decision the user made, and lifting one reconnected seconds after
+        // they asked for the opposite.
         coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
         coEvery { config.get("manual_disconnect") } returns "true"
         every { client.isManuallyDisconnected() } returns true
@@ -259,11 +238,27 @@ class SyncEngineTest {
 
         val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
         try {
-            // The switch wins: the manual disconnect is lifted rather than obeyed.
-            verify(atLeast = 1) { client.acceptReconnectRequest() }
-            verify(exactly = 0) {
-                client.connect(any(), any(), any(), any(), any(), requireApproval = true)
-            }
+            delay(200)
+            verify(exactly = 0) { client.acceptReconnectRequest() }
+            verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun aManualDisconnectDoesNotSitAtTheRelayBeingAskedRepeatedly() = runBlocking {
+        // Staying reachable while paused meant the desktop's presence prompted
+        // this phone over and over, which is its own kind of not-disconnected.
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
+        coEvery { config.get("manual_disconnect") } returns "true"
+        every { client.isManuallyDisconnected() } returns true
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            delay(200)
+            verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any()) }
         } finally {
             job.cancelAndJoin()
         }

@@ -56,8 +56,18 @@ fn idle_once(state: &AppState, reason: &str) {
 pub async fn start(state: AppState, local_port: u16) {
     let mut backoff = MIN_BACKOFF;
     loop {
-        // When automatic connection is off this PC stays off the relay until the
-        // user asks for a phone, so it cannot attach to one they did not choose.
+        // Disconnect means disconnect. Paused outranks everything below it,
+        // including the preference and a code being on screen, so nothing here
+        // reaches for a phone the user just let go of.
+        if state.is_paused() {
+            idle_once(
+                &state,
+                "the phone was disconnected here; pick it under previous connections \
+                 or ask for a new pairing code to reconnect",
+            );
+            state.await_relay_request().await;
+            continue;
+        }
         // Being at the relay is not the same as accepting a phone. This PC waits
         // there whenever a pairing code is on screen, because a phone that scans
         // it has no other way to reach this machine; whether the phone is then

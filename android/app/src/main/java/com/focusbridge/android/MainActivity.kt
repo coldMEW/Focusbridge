@@ -162,6 +162,11 @@ class MainActivity : ComponentActivity() {
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     },
                     startSync = {
+                        // Asking to sync is asking to undo a disconnect. Without
+                        // this the button starts a service that immediately does
+                        // nothing, because a manual disconnect is deliberately
+                        // sticky and only the user may lift it.
+                        webSocketClient.acceptReconnectRequest()
                         ContextCompat.startForegroundService(
                             this,
                             Intent(this, SyncForegroundService::class.java),
