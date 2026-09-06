@@ -122,12 +122,35 @@ fn large_inventory_uses_bounded_authenticated_chunks() {
         &Identity::generate().unwrap(),
         &Identity::generate().unwrap(),
     );
-    let record = vec![0x61; 1024 * 1024];
+    // Shaped like the real payload this exists for: an app inventory is the
+    // largest thing sent, and it names every app on the phone.
+    let secrets = [
+        "com.example.banking",
+        "Private Messenger",
+        "com.employer.internal.vpn",
+    ];
+    let mut record = Vec::new();
+    while record.len() < 1024 * 1024 - 256 {
+        for secret in secrets {
+            record.extend_from_slice(secret.as_bytes());
+            record.push(b',');
+        }
+    }
     let frames = phone.seal_record(&record).unwrap();
     assert!(frames.len() > 1);
     let mut decoded = None;
     for (index, frame) in frames.iter().enumerate() {
         assert!(frame.len() <= 65535);
+        // Every chunk crosses the relay on its own, so each one has to hide its
+        // contents; it is not enough for the record to be safe once reassembled.
+        for secret in secrets {
+            assert!(
+                !frame
+                    .windows(secret.len())
+                    .any(|part| part == secret.as_bytes()),
+                "chunk {index} leaked {secret}"
+            );
+        }
         let current = desktop.open_frame(frame).unwrap();
         if index < frames.len() - 1 {
             assert!(current.is_none());
