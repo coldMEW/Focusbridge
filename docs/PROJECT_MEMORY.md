@@ -1,6 +1,132 @@
 # FocusBridge Project Memory
 
-Last updated: 2026-09-05
+Last updated: 2026-09-06
+
+## Cross-network networking checkpoint (2026-09-06)
+
+The relay is deployed and both clients now use it. Component and on-device tests
+pass. A live phone-to-PC sync across two real networks has NOT been performed
+yet; that is the remaining acceptance gate and it needs a signed-in, email
+verified account. Do not describe cross-network sync as proven until it is run.
+
+### Relay deployed
+
+- `https://focusbridge-relay.focusbridge.workers.dev`, version
+  `8b5926e2-afa6-48ee-a4a7-7e2d889e1991`, account
+  `dc49394930ffae475df648af5501b7f1`. The existing Wrangler OAuth token already
+  carried `workers:write`, so no new authorization was needed.
+- Gate order actually followed: 65 worker tests, TypeScript check, dry-run
+  (57.18 KiB / 15.49 KiB gzip), then deploy.
+- Live probes: `/health` 200; `POST /v1/pairs` unauthenticated 401; bad bearer
+  401; unknown route 404; socket without `Upgrade` 426; any query string 400.
+- Workers Free plan, `workers.dev` hostname. Cloudflare documents workers.dev as
+  personal/hobby use; a business launch needs a custom domain and a route.
+
+### Both clients now speak to it
+
+- Desktop `sync/relay_client.rs` replaces the 12-line stub: dials the Worker on
+  443, drives the Noise responder handshake, then bridges decrypted records into
+  the existing local server over a loopback connection pinned to this process's
+  own certificate by DER SHA-256. Storage, ACKs, inventory, rules and
+  diagnostics therefore run on one tested path for both transports.
+- Desktop `sync/relay_api.rs` provisions and revokes pairs with a Firebase ID
+  token; `sync/relay_identity.rs` holds the desktop Noise static key, per-pair
+  PSK and the pinned phone key in the SQLCipher settings table.
+- Android `WebSocketClient` gained a relay transport: binary Noise frames, with
+  relay control frames handled as bounded metadata that can never be mistaken
+  for peer data. `SyncEngine` tries every LAN candidate first and falls back to
+  the relay, and holds an attached relay socket open while the desktop is absent
+  rather than churning it every retry tick.
+- QR payload v2 adds `relay` (url, accountKey, pairId, phone capability) and
+  `noise` (desktop public key, enrollment PSK) blocks. They are accepted only as
+  a complete set; a partial block leaves the pairing LAN-only. v1 payloads still
+  parse. Room schema is version 4 with migration 3→4 adding the relay columns.
+- Full design and threat notes: `docs/cross-network-architecture.md`.
+
+### Android encryption bridge is real now
+
+- `libfocusbridge_secure_channel_jni.so` is built for `arm64-v8a`,
+  `armeabi-v7a`, `x86_64` and `x86` and verified present in both the debug and
+  release APKs, with 9 JNI exports each.
+- ProGuard keeps the native method names explicitly; the release mapping file
+  confirms `NativeSecureChannel` and its natives are not renamed.
+- Build and packaging: `shared/secure-channel-jni/tests/build-android.ps1
+  -Ndk <ndk>`; it strips the published copies and fails if any ABI is missing.
+
+### Verification actually run on 2026-09-06
+
+- Android instrumented, disposable emulator `focusbridge-storage-proof-api34`:
+  **34 tests pass**, including the 16 storage/migration fixtures that had never
+  been executed before and 10 new native-bridge tests proving the library loads,
+  validates input, wipes secrets and bounds handles on-device.
+- Android JVM: 91 tests, lint 0 errors / 9 warnings, debug and release APKs.
+- Desktop: 81 Rust tests, Clippy `-D warnings`, rustfmt.
+- Frontend: 49 tests, TypeScript.
+- Relay worker: 65 tests, TypeScript.
+- Shared crypto: 17 tests.
+
+### Defects found and fixed while verifying
+
+- **Desktop never compiled.** The working tree had switched rusqlite to
+  `bundled-sqlcipher-vendored-openssl`, which needs a native Perl this machine
+  lacked, so no desktop test had run since. Installed Strawberry Perl through
+  scoop; OpenSSL now builds. Use
+  `PATH=~/scoop/apps/perl/current/perl/bin:$PATH` for desktop Cargo commands.
+- **A rejected database key rewrote the database.** Opening an encrypted
+  database with the wrong key still checkpointed the ciphertext write-ahead log
+  into the main file as the failed connection dropped, changing 8,164 bytes. The
+  key probe now sets `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` until the key is proven.
+- **Any app or web page could silently re-pair the phone.** `focusbridge://pair`
+  was consumed with no confirmation, and the v2 payload carries relay
+  credentials, so a malicious link could have streamed notifications to an
+  attacker from any network. Pairing links now show what is being connected to,
+  including the certificate code the desktop displays, and require confirmation.
+- **Cleartext traffic was still permitted.** Every transport is TLS now, so
+  `usesCleartextTraffic` is false; a regression can no longer downgrade one.
+- **Schema version was hard-coded in the storage layer.** Bumping Room to 4
+  made the migrator reject the user's own database. Both now read
+  `FOCUSBRIDGE_SCHEMA_VERSION`.
+- **The migrator refused every real migration.** It failed on a zero-length
+  rollback journal, which SQLite defines as not hot. It now retires a proven
+  cold journal and still refuses anything holding data.
+- Relay request logging is disabled in release builds; the desktop labels a
+  relay session `relay` rather than `wss` so diagnostics cannot imply LAN.
+
+### Environment repairs
+
+- Windows temp cleanup was deleting the Android SDK from `C:\tmp`: the platform,
+  build-tools, most of platform-tools, the system image and the AVD were gone.
+  The SDK now lives at `C:\Users\DSU\android-sdk` with `local.properties` and
+  `run-storage-proof.ps1` updated, and the AVD at
+  `C:\Users\DSU\focusbridge-storage-avd`. Do not put tooling in `C:\tmp`.
+- `tests/encrypted_database.rs` needs an ordinary SQLite to prove the database
+  is unreadable. Set `FOCUSBRIDGE_SQLITE3_TEST_BIN` to a real `sqlite3.exe`
+  (`C:/Users/DSU/android-sdk/platform-tools/sqlite3.exe`), or to
+  `desktop/scripts/ordinary-sqlite3.cmd`, which is the same proof through
+  CPython's independently built SQLite.
+
+### Still outstanding
+
+1. Live cross-network acceptance: phone on mobile data, PC on Wi-Fi, with
+   approval from the PC, an offline recipient, Doze, route change, relay outage
+   and LAN fallback. Needs a verified account to provision a pair.
+2. Android database encryption is still gated: `buildEncryptedDatabase` passes
+   all 34 device fixtures but `provideDatabase` still opens plaintext. Enabling
+   it migrates the owner's live phone database, which needs explicit consent.
+3. Endurance: overnight background delivery, duplicate suppression, reconnect.
+4. Release signing with a private keystore; the release APK is still debug
+   signed. Clean-machine install test.
+5. Phone Link feature gaps stay labelled, not advertised. See
+   `docs/phone-link-gap-analysis.md`.
+
+## Commit and release policy
+
+
+User instruction: do not commit or push work that has not met the full production
+release gate. Automated test success alone does not satisfy this. Current review
+changes must remain uncommitted until required features, security controls,
+actual-device/network acceptance, and release artifacts are verified. Never
+describe untested behavior as working or promise absolute absence of bugs.
 
 ## Product
 
@@ -22,6 +148,56 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
 
 ## Most Recent Work
 
+- Cloudflare account setup on 2026-09-05: owner supplied account subdomain
+  `focusbridge.workers.dev`; ignored `tools/cloudflare/.env.local` holds the
+  account metadata. Pinned Wrangler 4.129.0 authenticated successfully using
+  browser OAuth. `whoami` matched the account and confirmed encrypted credential
+  storage with a Windows Credential Manager key. Only account/user read and
+  offline refresh scopes were granted. No Worker deployed, no billing enabled;
+  Workers Free plan still needs dashboard confirmation before deployment.
+- `tools/cloudflare` is setup tooling, NOT a functioning relay. A prospective
+  `focusbridge-relay.focusbridge.workers.dev` endpoint is not live. The Actix
+  binary cannot be deployed directly to Workers. Private cloud sync remains
+  blocked pending device-only key management, replay-safe sessions, and the
+  reviewed Workers relay. See `docs/phone-link-gap-analysis.md` for the official
+  Phone Link comparison, concrete gaps, and ordered acceptance gates.
+- Password visibility controls were added to the desktop auth gate. Advanced
+  relay auth remains for now; it is legacy self-hosted auth, not required for
+  LAN or Firebase login. Fresh frontend verification: 41 tests and TypeScript
+  pass. Database encryption source is being staged behind rollout gates; do not
+  claim that existing installed app databases have been encrypted.
+- Final desktop liveness regression checks: 49 Rust tests passed (24 core,
+  7 inventory, 18 connection); the 18 connection tests also passed after the
+  final Clippy correction. Clippy warnings-denied and frontend build passed.
+  Slow batch processing now services real control frames while awaiting bounded
+  application work. Physical LAN testing of the initial fix measured 7.24s
+  disconnect detection and 12.52s reconnect; the refined batch fix still needs
+  device acceptance. See `docs/release-verification-2026-09-05.md` for limits.
+- Android database-encryption staging: 61 JVM tests pass, including 15 new
+  key/state tests. Native test APK compiles with 14 unexecuted tests; release
+  build passes with existing debug signing. Lint has zero errors/60 warnings.
+  SQLCipher/Keystore staging is NOT the active Room provider. Execute native
+  fixtures on a disposable emulator and review recovery before activation;
+  do not install a candidate over the user's phone merely to claim tests ran.
+  Desktop staging files and exact resume gates are documented in
+  `docs/security-review-2026-09-05.md`. Nothing committed or deployed.
+
+- Additional source review after ebe1356: see `docs/security-review-2026-09-05.md`.
+  Relay failed-send/flush data loss, stale detach/routing, inert message limits,
+  silent plaintext startup, weak/missing startup secrets, token expiry boundary,
+  malformed hash verification, and non-atomic account persistence are addressed.
+  This supersedes those specific open findings in earlier audit notes, not the
+  remaining E2E/deployment/HTTP-auth abuse-control blockers.
+- Android app lock now loads credentials atomically, gates pairing/reconnect,
+  relocks in the background, rejects stale unlock completions, and throttles
+  attempts. These changes do not stop already-running notification sync.
+- Review coverage is explicit in the new audit. Do not claim a whole-repository
+  line-by-line audit or production readiness. Free-first policy is unchanged.
+- Verification for this slice: relay 37 tests plus Clippy/fmt pass; Android 46
+  tests, assembleDebug, and lint pass. Lint needed network access for missing
+  dependencies; the blocker was resolved without suppressions. Local secrets
+  are masked. No production installer or live relay was released.
+
 - Follow-up review: `docs/network-review-followup-2026-09-05.md` tracks source
   findings and device acceptance still required. Do not interpret historical
   notes below as proof that all networking/security issues are resolved.
@@ -40,7 +216,7 @@ FocusBridge is a local-first attention filter. Android captures phone notificati
   has 34 passing tests and a rebuilt debug APK; frontend has 26 passing tests
   and TypeScript passes. No new production artifacts published.
 
-- September audit supersedes prior production-ready claims. See `docs/network-security-audit-2026-09-05.md` for verified fixes, open security blockers, and hosting setup. Public relay hosting is not configured; user has no server/domain yet. Relay privacy needs separate authentication capabilities and encryption secrets before deployment.
+- September audit supersedes prior production-ready claims. See `docs/network-security-audit-2026-09-05.md` for verified fixes, open security blockers, and hosting setup. A Cloudflare account was subsequently authenticated (see above), but public relay hosting is not deployed. Relay privacy needs separate authentication capabilities and encryption secrets before deployment.
 - September patch fixes aggregate Android counts, missing ACK retries during connected sessions, cancellation handling, stale Android callbacks, pre-auth desktop message processing, empty auth keys, nonce-length panic, expired QR acceptance, and socket cleanup on errors. Local endpoints now require pinned WSS; both clients need updating. Legacy cloud mode is explicitly blocked pending the secure relay protocol.
 - Verification: Android unit tests and debug APK pass; Rust core has 24 passing tests; desktop cargo check passes. No physical-device network/Doze acceptance test or production release was performed for this checkpoint.
 - Current persistence slice hardens Android background sync: the foreground sync service now explicitly starts with the `dataSync` foreground-service type, holds a non-reference-counted partial wake lock and Wi-Fi lock while the service is alive, restarts from `onTaskRemoved`, and declares `WAKE_LOCK`. This is intentionally aggressive for LAN reliability and should be revisited before Play Store release if battery policy warnings become a concern.

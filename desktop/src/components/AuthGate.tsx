@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import PasswordInput from "./PasswordInput";
 import logo from "../assets/logo.png";
 import {
   clearAccountSession,
@@ -437,13 +438,15 @@ function AccountPanel(props: {
       ) : (
         <div className="mt-6 space-y-3">
           <input value={props.email} onChange={(event) => props.setEmail(event.target.value)} className="auth-input" placeholder="Email address" />
-          <input
+          <PasswordInput
+            key={props.accountMode}
+            label="Account password"
             value={props.firebasePassword}
             onChange={(event) => props.setFirebasePassword(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") void props.submitFirebaseAccount();
             }}
-            type="password"
+            autoComplete={props.accountMode === "signup" ? "new-password" : "current-password"}
             className="auth-input"
             placeholder="Account password"
           />
@@ -463,7 +466,7 @@ function AccountPanel(props: {
       <details className="mt-5 rounded-3xl border border-border-subtle bg-bg-primary/60 p-4">
         <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.2em] text-text-muted">Advanced relay auth</summary>
         <input value={props.relayUrl} onChange={(event) => props.setRelayUrl(event.target.value)} className="auth-input mt-3" placeholder="http://127.0.0.1:8443" />
-        <input value={props.relayPassword} onChange={(event) => props.setRelayPassword(event.target.value)} type="password" className="auth-input mt-3" placeholder="Relay password" />
+        <PasswordInput label="Relay password" value={props.relayPassword} onChange={(event) => props.setRelayPassword(event.target.value)} autoComplete="current-password" className="auth-input" wrapperClassName="mt-3" placeholder="Relay password" />
         {props.relayOtpSent && <input value={props.relayOtp} onChange={(event) => props.setRelayOtp(event.target.value)} className="auth-input mt-3" placeholder="6-digit email code" />}
         <button onClick={() => void (props.relayOtpSent ? props.verifyRelayOtp() : props.requestRelayOtp())} disabled={props.relayBusy} className="mt-3 w-full rounded-full bg-text-primary px-5 py-3 text-sm font-bold text-bg-primary transition hover:bg-accent-study disabled:opacity-60">
           {props.relayBusy ? "Checking email..." : props.relayOtpSent ? "Verify code" : "Send email code"}
@@ -507,7 +510,7 @@ function LocalLockPanel(props: {
             {props.recoveryQuestion ?? "Security recovery is not configured on this desktop."}
           </div>
           <input value={props.securityAnswer} onChange={(event) => props.setSecurityAnswer(event.target.value)} className="auth-input" placeholder="Security answer" />
-          <input value={props.newPassword} onChange={(event) => props.setNewPassword(event.target.value)} type="password" className="auth-input" placeholder="New PIN or password" />
+          <PasswordInput label="New PIN or password" value={props.newPassword} onChange={(event) => props.setNewPassword(event.target.value)} autoComplete="new-password" className="auth-input" placeholder="New PIN or password" />
           <button onClick={() => void props.submitLocalLock()} className="w-full rounded-full bg-text-primary px-5 py-3 text-sm font-bold text-bg-primary transition hover:bg-accent-study active:scale-95">
             Reset local lock
           </button>
@@ -517,13 +520,15 @@ function LocalLockPanel(props: {
         </div>
       ) : (
         <div className="mt-6 space-y-3">
-          <input
+          <PasswordInput
+            key={props.lockMode}
+            label={props.configured ? "PIN or password" : "Create PIN or password"}
             value={props.password}
             onChange={(event) => props.setPassword(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") void props.submitLocalLock();
             }}
-            type="password"
+            autoComplete={props.configured ? "current-password" : "new-password"}
             autoFocus
             className="auth-input"
             placeholder={props.configured ? "PIN or password" : "Create PIN or password"}

@@ -1,0 +1,17 @@
+{
+  "name": "focusbridge-cloudflare-tools",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "login": "node --env-file=.env.local node_modules/wrangler/bin/wrangler.js login --use-keyring --scopes account:read user:read",
+    "whoami": "node --env-file=.env.local node_modules/wrangler/bin/wrangler.js whoami",
+    "version": "node --env-file=.env.local node_modules/wrangler/bin/wrangler.js --version"
+  },
+  "devDependencies": {
+    "wrangler": "4.129.0"
+  }
+}

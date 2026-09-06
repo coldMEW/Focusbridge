@@ -6,6 +6,11 @@ import org.junit.Test
 
 class MobileAppLockCryptoTest {
     @Test
+    fun malformedStoredSaltFailsClosed() {
+        assertFalse(MobileAppLockCrypto.verify("1234", "not base64!", "hash"))
+    }
+
+    @Test
     fun verifiesOnlyMatchingSecret() {
         val salt = MobileAppLockCrypto.newSalt()
         val hash = MobileAppLockCrypto.hashSecret("1234", salt)

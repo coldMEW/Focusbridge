@@ -36,7 +36,7 @@ class WebSocketClientTest {
             }
         }
         every { inventory.launchableApps() } returns emptyList()
-        client = WebSocketClient(mockk<Context>(relaxed = true), transport, inventory, appRules, config, mockk(relaxed = true), mockk(relaxed = true))
+        client = WebSocketClient(mockk<Context>(relaxed = true), transport, inventory, appRules, config, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
     }
 
     @After fun cleanup() { client.disconnect(); unmockkStatic("com.focusbridge.android.sync.PinnedTlsKt") }

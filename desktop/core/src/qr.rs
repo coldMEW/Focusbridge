@@ -5,6 +5,27 @@ use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
+/// Cross-network rendezvous, added in QR version 2. `url`, `account_key` and
+/// `pair_id` are routing metadata; `capability` is the phone's revocable transport
+/// token. None of them can read application traffic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrRelay {
+    pub url: String,
+    pub account_key: String,
+    pub pair_id: String,
+    pub capability: String,
+}
+
+/// Device-only key material: the desktop static public key the phone pins, and the
+/// single-pairing enrollment pre-shared key. Neither is ever sent to the relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QrNoise {
+    pub desktop_key: String,
+    pub psk: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QrPayload {
     pub v: u32,
@@ -26,6 +47,12 @@ pub struct QrPayload {
     pub pairing_key: String,
     #[serde(rename = "certFingerprint")]
     pub cert_fingerprint: String,
+    /// Present together or not at all: a half-populated pair is unusable and the
+    /// phone must fall back to LAN rather than dial a relay it cannot authenticate to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<QrRelay>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise: Option<QrNoise>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +109,8 @@ mod tests {
             device_id: "id".into(),
             pairing_key: "a".repeat(64),
             cert_fingerprint: "b".repeat(64),
+            relay: None,
+            noise: None,
         };
         let out = make_qr(&p, 10).unwrap();
         assert!(!out.png_base64.is_empty());
@@ -100,12 +129,72 @@ mod tests {
             device_id: "id".into(),
             pairing_key: "a".repeat(64),
             cert_fingerprint: "b".repeat(64),
+            relay: None,
+            noise: None,
         };
 
         let out = make_qr(&p, 10).unwrap();
 
         assert!(out.payload.starts_with('{'));
         assert!(out.deep_link.starts_with("focusbridge://pair?payload="));
+    }
+
+    #[test]
+    fn version_two_payloads_carry_relay_and_noise_blocks() {
+        let p = QrPayload {
+            v: 2,
+            mode: "local".into(),
+            endpoint: "wss://1.2.3.4:9173".into(),
+            endpoint_candidates: vec!["wss://1.2.3.4:9173".into()],
+            relay_url: None,
+            device_pair_id: None,
+            device_id: "id".into(),
+            pairing_key: "a".repeat(64),
+            cert_fingerprint: "b".repeat(64),
+            relay: Some(QrRelay {
+                url: "https://relay.example".into(),
+                account_key: "c".repeat(64),
+                pair_id: "d".repeat(32),
+                capability: "E".repeat(43),
+            }),
+            noise: Some(QrNoise {
+                desktop_key: "AAAA".into(),
+                psk: "BBBB".into(),
+            }),
+        };
+
+        let payload = make_qr(&p, 10).unwrap().payload;
+
+        // Field names must match the Android serializer exactly.
+        assert!(payload.contains("\"relay\":{\"url\":\"https://relay.example\""));
+        assert!(payload.contains("\"accountKey\""));
+        assert!(payload.contains("\"pairId\""));
+        assert!(payload.contains("\"capability\""));
+        assert!(payload.contains("\"noise\":{\"desktopKey\":\"AAAA\",\"psk\":\"BBBB\"}"));
+        assert!(!payload.contains("account_key"));
+        assert!(!payload.contains("desktop_key"));
+    }
+
+    #[test]
+    fn payloads_without_a_relay_omit_both_blocks_entirely() {
+        let p = QrPayload {
+            v: 1,
+            mode: "local".into(),
+            endpoint: "wss://1.2.3.4:9173".into(),
+            endpoint_candidates: vec![],
+            relay_url: None,
+            device_pair_id: None,
+            device_id: "id".into(),
+            pairing_key: "a".repeat(64),
+            cert_fingerprint: "b".repeat(64),
+            relay: None,
+            noise: None,
+        };
+
+        let payload = make_qr(&p, 10).unwrap().payload;
+
+        assert!(!payload.contains("relay"));
+        assert!(!payload.contains("noise"));
     }
 
     #[test]
@@ -120,6 +209,8 @@ mod tests {
             device_id: "id".into(),
             pairing_key: "a".repeat(64),
             cert_fingerprint: "b".repeat(64),
+            relay: None,
+            noise: None,
         };
 
         let payload = make_qr(&p, 10).unwrap().payload;

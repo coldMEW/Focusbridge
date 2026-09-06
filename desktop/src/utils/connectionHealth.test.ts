@@ -7,7 +7,7 @@ describe("desktop connection health", () => {
   it("keeps a connected state when a heartbeat is fresh", () => {
     expect(
       desktopConnectionStateFromDiagnostics(
-        { connected: true, lastHeartbeatAt: now - 10_000 },
+        { connected: true, lastHeartbeatAt: now - 2_000 },
         now,
       ),
     ).toBe("CONNECTED");
@@ -22,13 +22,28 @@ describe("desktop connection health", () => {
     ).toBe("DISCONNECTED");
   });
 
-  it("tolerates short Android background heartbeat delays", () => {
+  it("allows a valid delayed Pong and backend scheduling slack", () => {
     expect(
       desktopConnectionStateFromDiagnostics(
-        { connected: true, lastHeartbeatAt: now - 75_000 },
+        { connected: true, lastHeartbeatAt: now - 10_000 },
         now,
       ),
     ).toBe("CONNECTED");
+  });
+
+  it("expires only after the twelve-second safety boundary", () => {
+    expect(desktopConnectionStateFromDiagnostics(
+      { connected: true, lastHeartbeatAt: now - 12_000 }, now,
+    )).toBe("CONNECTED");
+    expect(desktopConnectionStateFromDiagnostics(
+      { connected: true, lastHeartbeatAt: now - 12_001 }, now,
+    )).toBe("DISCONNECTED");
+  });
+
+  it("honors backend disconnect immediately even with a recent Pong", () => {
+    expect(desktopConnectionStateFromDiagnostics(
+      { connected: false, lastHeartbeatAt: now }, now,
+    )).toBe("DISCONNECTED");
   });
 
   it("treats connected sockets without first heartbeat as connecting briefly", () => {

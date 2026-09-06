@@ -3,6 +3,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   type User,
@@ -51,6 +52,30 @@ export async function firebaseCurrentUser(): Promise<FirebaseAuthResult | null> 
       resolve(user ? await toResult(user) : null);
     });
   });
+}
+
+/**
+ * A freshly minted ID token for one relay request.
+ *
+ * The relay only provisions pairs for verified accounts, so the caller must be
+ * able to tell the difference between "not signed in" and "email not verified".
+ */
+export async function firebaseRelayToken(): Promise<
+  { ok: true; idToken: string } | { ok: false; reason: "signed-out" | "unverified" }
+> {
+  const user = auth.currentUser;
+  if (!user) return { ok: false, reason: "signed-out" };
+  // Refresh first: verification completed in a browser is not reflected in a
+  // token minted before the user clicked the link.
+  await user.reload();
+  if (!user.emailVerified) return { ok: false, reason: "unverified" };
+  return { ok: true, idToken: await user.getIdToken(true) };
+}
+
+export async function firebaseSendVerificationEmail(): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sign in first to verify this email address.");
+  await sendEmailVerification(user);
 }
 
 export async function firebaseSendPasswordReset(email: string): Promise<void> {

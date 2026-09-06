@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -89,6 +90,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.res.painterResource
@@ -96,7 +99,6 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.lifecycleScope
 import com.focusbridge.android.data.local.NotificationEntity
 import com.focusbridge.android.data.local.PairingEntity
 import com.focusbridge.android.data.repository.ConfigRepository
@@ -104,8 +106,11 @@ import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.data.repository.PairingRepository
 import com.focusbridge.android.pairing.PairingManager
 import com.focusbridge.android.security.MobileAppLockCrypto
+import com.focusbridge.android.security.MobileLockAttempts
+import com.focusbridge.android.security.MobileLockSession
 import com.focusbridge.android.service.SyncForegroundService
 import com.focusbridge.android.sync.ConnectionState
+import com.focusbridge.android.sync.connectionHint
 import com.focusbridge.android.sync.WebSocketClient
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
@@ -118,6 +123,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -127,10 +133,12 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var pairingManager: PairingManager
     @Inject lateinit var configRepository: ConfigRepository
     @Inject lateinit var webSocketClient: WebSocketClient
+    @Inject lateinit var lockAttempts: MobileLockAttempts
+    private var pendingPairing by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        consumePairingIntent(intent)
+        pendingPairing = intent?.data?.toString()
         setContent {
             FocusBridgeTheme {
                 FocusBridgeScreen(
@@ -138,6 +146,9 @@ class MainActivity : ComponentActivity() {
                     pairingRepository = pairingRepository,
                     pairingManager = pairingManager,
                     configRepository = configRepository,
+                    lockAttempts = lockAttempts,
+                    pendingPairing = pendingPairing,
+                    pairingConsumed = { pendingPairing = null; intent?.data = null },
                     connectionState = webSocketClient.state.collectAsState().value,
                     reconnectRequest = webSocketClient.reconnectRequest.collectAsState().value,
                     openNotificationAccess = {
@@ -173,24 +184,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        consumePairingIntent(intent)
-    }
-
-    private fun consumePairingIntent(intent: Intent?) {
-        val payload = intent?.data?.toString()?.takeIf { it.startsWith("focusbridge://pair") } ?: return
-        lifecycleScope.launch {
-            runCatching { pairingManager.consume(payload) }
-                .onSuccess {
-                    ContextCompat.startForegroundService(
-                        this@MainActivity,
-                        Intent(this@MainActivity, SyncForegroundService::class.java),
-                    )
-                    Toast.makeText(this@MainActivity, "FocusBridge paired. Starting sync.", Toast.LENGTH_LONG).show()
-                }
-                .onFailure {
-                    Toast.makeText(this@MainActivity, "Pairing failed: ${it.message}", Toast.LENGTH_LONG).show()
-                }
-        }
+        pendingPairing = intent.data?.toString()
     }
 
     companion object {
@@ -220,6 +214,9 @@ private fun FocusBridgeScreen(
     pairingRepository: PairingRepository,
     pairingManager: PairingManager,
     configRepository: ConfigRepository,
+    lockAttempts: MobileLockAttempts,
+    pendingPairing: String?,
+    pairingConsumed: () -> Unit,
     connectionState: ConnectionState,
     reconnectRequest: com.focusbridge.android.sync.DesktopReconnectRequest?,
     openNotificationAccess: () -> Unit,
@@ -245,13 +242,15 @@ private fun FocusBridgeScreen(
     val priorityKeywords by configRepository.observe("priority_keywords").collectAsState(initial = "")
     val favoriteContacts by configRepository.observe("favorite_contacts").collectAsState(initial = "")
     val blockedKeywords by configRepository.observe("blocked_keywords").collectAsState(initial = "")
-    val appLockEnabled by configRepository.observe("mobile_lock_enabled").map { it == "true" }.collectAsState(initial = false)
-    val appLockSalt by configRepository.observe("mobile_lock_salt").collectAsState(initial = "")
-    val appLockHash by configRepository.observe("mobile_lock_hash").collectAsState(initial = "")
-    val recoveryQuestion by configRepository.observe("mobile_lock_recovery_question").collectAsState(initial = "")
-    val recoverySalt by configRepository.observe("mobile_lock_recovery_salt").collectAsState(initial = "")
-    val recoveryHash by configRepository.observe("mobile_lock_recovery_hash").collectAsState(initial = "")
-    var appUnlocked by remember { mutableStateOf(false) }
+    val lockConfig by remember(configRepository) { configRepository.observeAppLock() }.collectAsState(initial = null)
+    val appLockEnabled = lockConfig?.get("mobile_lock_enabled").let { it != null && it != "false" }
+    val appLockSalt = lockConfig?.get("mobile_lock_salt")
+    val appLockHash = lockConfig?.get("mobile_lock_hash")
+    val recoveryQuestion = lockConfig?.get("mobile_lock_recovery_question")
+    val recoverySalt = lockConfig?.get("mobile_lock_recovery_salt")
+    val recoveryHash = lockConfig?.get("mobile_lock_recovery_hash")
+    val lockSession = remember(appLockEnabled) { MobileLockSession() }
+    val appUnlocked = lockSession.unlocked
     var tab by remember { mutableStateOf(AppTab.Home) }
     val scope = rememberCoroutineScope()
     val notificationPermission = rememberLauncherForActivityResult(
@@ -262,8 +261,9 @@ private fun FocusBridgeScreen(
     var postNotificationsAllowed by remember { mutableStateOf(isPostNotificationsAllowed(context)) }
     var batteryUnrestricted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
-    DisposableEffect(lifecycleOwner, context) {
+    DisposableEffect(lifecycleOwner, context, lockSession) {
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) lockSession.relock()
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationAccessEnabled = isNotificationAccessEnabled(context)
                 postNotificationsAllowed = isPostNotificationsAllowed(context)
@@ -284,11 +284,14 @@ private fun FocusBridgeScreen(
         startSync()
     }
 
-    LaunchedEffect(appLockEnabled) {
-        if (!appLockEnabled) appUnlocked = false
+    if (lockConfig == null) {
+        Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF5EFE4)) {
+            Box(contentAlignment = Alignment.Center) { Text("Loading app lock...") }
+        }
+        return
     }
 
-    if (reconnectRequest != null) {
+    if (reconnectRequest != null && (!appLockEnabled || appUnlocked)) {
         AlertDialog(
             onDismissRequest = dismissReconnect,
             title = { Text("Reconnect to desktop?") },
@@ -314,18 +317,24 @@ private fun FocusBridgeScreen(
         )
     }
 
-    if (appLockEnabled && !appUnlocked && !appLockHash.isNullOrBlank()) {
+    if (appLockEnabled && !appUnlocked) {
         MobileAppLockGate(
-            appLockSalt = appLockSalt,
-            appLockHash = appLockHash,
             recoveryQuestion = recoveryQuestion,
             recoveryHash = recoveryHash,
-            onUnlock = { appUnlocked = true },
-            onResetSecret = { newSecret, answer, onResult ->
+            onUnlock = { secret, onResult ->
+                val generation = lockSession.generation
                 scope.launch {
-                    val validAnswer = MobileAppLockCrypto.verify(answer.lowercase(), recoverySalt, recoveryHash)
+                    if (lockAttempts.verify(secret, appLockSalt, appLockHash)) {
+                        lockSession.unlock(generation)
+                    } else onResult("Incorrect PIN/password or too many attempts. Wait 30 seconds.")
+                }
+            },
+            onResetSecret = { newSecret, answer, onResult ->
+                val generation = lockSession.generation
+                scope.launch {
+                    val validAnswer = lockAttempts.verify(answer.lowercase(), recoverySalt, recoveryHash)
                     if (!validAnswer) {
-                        onResult("Security answer did not match.")
+                        onResult("Security answer did not match or too many attempts. Wait 30 seconds.")
                         return@launch
                     }
                     if (!MobileAppLockCrypto.validSecret(newSecret)) {
@@ -333,14 +342,88 @@ private fun FocusBridgeScreen(
                         return@launch
                     }
                     val salt = MobileAppLockCrypto.newSalt()
-                    configRepository.set("mobile_lock_salt", salt)
-                    configRepository.set("mobile_lock_hash", MobileAppLockCrypto.hashSecret(newSecret, salt))
-                    appUnlocked = true
+                    if (generation != lockSession.generation) return@launch
+                    configRepository.setAll(mapOf(
+                        "mobile_lock_salt" to salt,
+                        "mobile_lock_hash" to MobileAppLockCrypto.hashSecret(newSecret, salt),
+                    ))
+                    lockSession.unlock(generation)
                     onResult("Local app lock reset.")
                 }
             },
         )
         return
+    }
+
+    // A pairing link can be sent by any installed app or web page, and pairing
+    // grants a PC access to this phone's notifications. Never act on one without
+    // the user confirming what they are about to connect to.
+    val pairingRequest = pendingPairing?.takeIf { it.startsWith("focusbridge://pair") }
+    if (pairingRequest != null) {
+        val preview = remember(pairingRequest) { pairingManager.preview(pairingRequest) }
+        val scope = rememberCoroutineScope()
+        if (preview == null) {
+            LaunchedEffect(pairingRequest) {
+                Toast.makeText(context, "That pairing link is not valid.", Toast.LENGTH_LONG).show()
+                pairingConsumed()
+            }
+        } else {
+            AlertDialog(
+                onDismissRequest = pairingConsumed,
+                title = { Text("Connect this phone to a PC?") },
+                text = {
+                    Column {
+                        Text(
+                            "This PC will be able to receive your notifications." +
+                                if (preview.crossNetwork) {
+                                    " It will also be able to reach this phone from any network."
+                                } else {
+                                    " It can reach this phone on your local network only."
+                                },
+                            color = Color(0xFF61706A),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text("Address\n${preview.endpoint}", color = Color(0xFF61706A))
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Security code\n${preview.shortFingerprint()}",
+                            color = Color(0xFF61706A),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Only continue if you started this on your own PC, and the security " +
+                                "code matches the one it is showing.",
+                            color = Color(0xFF61706A),
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    pairingManager.consume(pairingRequest)
+                                    startSync()
+                                    Toast.makeText(context, "FocusBridge paired. Starting sync.", Toast.LENGTH_LONG).show()
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    Toast.makeText(context, "Pairing failed: ${error.message}", Toast.LENGTH_LONG).show()
+                                } finally {
+                                    pairingConsumed()
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF17221E)),
+                    ) {
+                        Text("Connect")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = pairingConsumed) { Text("Cancel") }
+                },
+            )
+        }
     }
 
     Surface(
@@ -428,12 +511,14 @@ private fun FocusBridgeScreen(
                                     }
                                     val secretSalt = MobileAppLockCrypto.newSalt()
                                     val answerSalt = MobileAppLockCrypto.newSalt()
-                                    configRepository.set("mobile_lock_salt", secretSalt)
-                                    configRepository.set("mobile_lock_hash", MobileAppLockCrypto.hashSecret(secret, secretSalt))
-                                    configRepository.set("mobile_lock_recovery_question", question.trim())
-                                    configRepository.set("mobile_lock_recovery_salt", answerSalt)
-                                    configRepository.set("mobile_lock_recovery_hash", MobileAppLockCrypto.hashSecret(answer.lowercase(), answerSalt))
-                                    configRepository.set("mobile_lock_enabled", "true")
+                                    configRepository.setAll(mapOf(
+                                        "mobile_lock_salt" to secretSalt,
+                                        "mobile_lock_hash" to MobileAppLockCrypto.hashSecret(secret, secretSalt),
+                                        "mobile_lock_recovery_question" to question.trim(),
+                                        "mobile_lock_recovery_salt" to answerSalt,
+                                        "mobile_lock_recovery_hash" to MobileAppLockCrypto.hashSecret(answer.lowercase(), answerSalt),
+                                        "mobile_lock_enabled" to "true",
+                                    ))
                                     onResult("Mobile app lock enabled.")
                                 }
                             },
@@ -644,7 +729,7 @@ private fun HomeTab(
                     connectionState == ConnectionState.CONNECTED -> "Desktop connected"
                     else -> "Desktop saved, reconnect needed"
                 },
-                body = activePairing?.endpoint ?: "Open desktop FocusBridge, show Pairing, then scan the QR code.",
+                body = connectionHint(activePairing, connectionState),
                 primary = if (connectionState == ConnectionState.CONNECTED) "Connected" else "Retry sync",
                 secondary = if (connectionState == ConnectionState.CONNECTED) "Disconnect" else "Notification access",
                 onPrimary = startSync,
@@ -983,11 +1068,9 @@ private fun decodeQr(imageProxy: ImageProxy): String? {
 
 @Composable
 private fun MobileAppLockGate(
-    appLockSalt: String?,
-    appLockHash: String?,
     recoveryQuestion: String?,
     recoveryHash: String?,
-    onUnlock: () -> Unit,
+    onUnlock: (String, (String) -> Unit) -> Unit,
     onResetSecret: (String, String, (String) -> Unit) -> Unit,
 ) {
     var secret by remember { mutableStateOf("") }
@@ -1011,6 +1094,8 @@ private fun MobileAppLockGate(
                 OutlinedTextField(
                     value = secret,
                     onValueChange = { secret = it },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     label = { Text("PIN or password") },
@@ -1018,12 +1103,8 @@ private fun MobileAppLockGate(
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
-                        if (MobileAppLockCrypto.verify(secret, appLockSalt, appLockHash)) {
-                            secret = ""
-                            onUnlock()
-                        } else {
-                            message = "Incorrect PIN/password."
-                        }
+                        onUnlock(secret) { message = it }
+                        secret = ""
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF17221E)),
                 ) {
@@ -1037,6 +1118,8 @@ private fun MobileAppLockGate(
                     OutlinedTextField(
                         value = answer,
                         onValueChange = { answer = it },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         label = { Text("Security answer") },
@@ -1044,6 +1127,8 @@ private fun MobileAppLockGate(
                     OutlinedTextField(
                         value = newSecret,
                         onValueChange = { newSecret = it },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         label = { Text("New PIN or password") },
@@ -1152,6 +1237,8 @@ private fun RulesTab(
                     OutlinedTextField(
                         value = lockSecret,
                         onValueChange = { lockSecret = it },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         label = { Text("PIN or password") },
@@ -1190,6 +1277,8 @@ private fun RulesTab(
                     OutlinedTextField(
                         value = lockAnswer,
                         onValueChange = { lockAnswer = it },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         label = { Text("Security answer") },

@@ -40,7 +40,10 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.FocusBridge"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false">
+        <!-- Every transport is TLS: the LAN listener is WSS with a QR-pinned
+             certificate, and the relay is WSS to a public HTTPS origin. Leaving
+             cleartext enabled would let a regression silently downgrade one. -->
 
         <service
             android:name=".service.NotificationService"

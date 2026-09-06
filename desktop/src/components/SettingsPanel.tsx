@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useNotificationStore } from "../stores/notificationStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useStudyMode } from "../hooks/useStudyMode";
+import { useConnection } from "../hooks/useConnection";
+import CrossNetworkPanel from "./CrossNetworkPanel";
 import {
   lockTimeoutLabel,
   lockTimeoutMinutesFrom,
@@ -36,6 +38,8 @@ const SECURITY_QUESTIONS = [
 ];
 
 export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean }) {
+  const { state: connectionState } = useConnection();
+  const connected = connectionState === "CONNECTED";
   const [customDays, setCustomDays] = useState("14");
   const [lockValue, setLockValue] = useState("15");
   const [lockUnit, setLockUnit] = useState<LockTimeoutUnit>("minute");
@@ -183,6 +187,9 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
         </div>
       )}
       <div className={fullPage ? "mx-auto grid w-full max-w-3xl gap-5" : ""}>
+      <div className={fullPage ? "" : "mb-5"}>
+        <CrossNetworkPanel />
+      </div>
       {!fullPage && (
       <>
       <div className={fullPage ? "rounded-[32px] border border-border-subtle bg-bg-secondary/60 p-5" : ""}>
@@ -237,8 +244,8 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
           <div className="mt-4 space-y-3 text-xs text-text-secondary">
             <DiagnosticLine
               label="State"
-              value={diagnostics.connected ? "Connected" : "Disconnected"}
-              good={diagnostics.connected}
+              value={connected ? "Connected" : "Disconnected"}
+              good={connected}
             />
             <DiagnosticLine label="Transport" value={diagnostics.activeTransport} />
             <DiagnosticLine label="LAN port" value={String(diagnostics.lanPort)} />
@@ -270,7 +277,7 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
                 {diagnostics.certificateFingerprint}
               </div>
             </div>
-            {diagnostics.connected && (
+            {connected && (
               <>
                 <button
                   onClick={() => void disconnectPhone()}

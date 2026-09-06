@@ -1,0 +1,131 @@
+package com.focusbridge.android.sync
+
+import com.focusbridge.android.data.local.PairingEntity
+import com.focusbridge.android.data.repository.ConfigRepository
+import com.focusbridge.android.data.repository.NotificationRepository
+import com.focusbridge.android.data.repository.PairingRepository
+import com.focusbridge.android.pairing.DeviceInfo
+import io.mockk.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+
+class SyncEngineTest {
+    private val pairings = mockk<PairingRepository>()
+    private val notifications = mockk<NotificationRepository>(relaxed = true)
+    private val config = mockk<ConfigRepository>(relaxed = true)
+    private val client = mockk<WebSocketClient>(relaxed = true)
+    private val state = MutableStateFlow(ConnectionState.DISCONNECTED)
+    private val pairing = PairingEntity(
+        "desktop", "wss://first", endpointCandidates = "wss://second",
+        pairingKey = "a".repeat(64), certFingerprint = "b".repeat(64),
+    )
+    private val engine = SyncEngine(pairings, notifications, client, config)
+    private val attempts = mutableListOf<String>()
+
+    @Before fun setup() {
+        mockkObject(DeviceInfo)
+        every { DeviceInfo.deviceName } returns "Phone"
+        coEvery { pairings.active() } returns pairing
+        every { client.state } returns state
+        every { client.isConnected() } answers { state.value == ConnectionState.CONNECTED }
+        every { client.connect(any(), any(), any(), any()) } answers {
+            attempts += thirdArg<String>()
+            state.value = ConnectionState.CONNECTING
+        }
+    }
+
+    @After fun cleanup() { unmockkObject(DeviceInfo) }
+
+    @Test fun immediateFailureFallsBackWithoutWaitingForTimeout() = runBlocking {
+        every { client.connect(any(), any(), any(), any()) } answers {
+            attempts += thirdArg<String>()
+            state.value = if (attempts.size == 1) ConnectionState.RETRYING else ConnectionState.CONNECTED
+        }
+        withTimeout(1_000) { engine.connectActivePairing() }
+        assertEquals(listOf("wss://first", "wss://second"), attempts)
+        coVerify(exactly = 1) { notifications.pending() }
+    }
+
+    @Test fun asynchronousFailureFallsBackWithoutWaitingForTimeout() = runBlocking {
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.connectActivePairing() }
+        state.value = ConnectionState.RETRYING
+        yield()
+        assertEquals(listOf("wss://first", "wss://second"), attempts)
+        state.value = ConnectionState.CONNECTED
+        withTimeout(1_000) { job.join() }
+    }
+
+    @Test fun disconnectedAttemptFallsBackWithoutWaitingForTimeout() = runBlocking {
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.connectActivePairing() }
+        state.value = ConnectionState.DISCONNECTED
+        yield()
+        assertEquals(2, attempts.size)
+        job.cancelAndJoin()
+    }
+
+    @Test fun manualDisconnectDuringConnectStopsFallbackPromptly() = runBlocking {
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.connectActivePairing() }
+        every { client.isManuallyDisconnected() } returns true
+        state.value = ConnectionState.DISCONNECTED
+        withTimeout(1_000) { job.join() }
+        assertEquals(listOf("wss://first"), attempts)
+        coVerify(exactly = 0) { notifications.pending() }
+    }
+
+    @Test fun connectingAttemptKeepsTimeoutBeforeFallback() = runBlocking {
+        val fallback = CompletableDeferred<Unit>()
+        every { client.connect(any(), any(), any(), any()) } answers {
+            attempts += thirdArg<String>()
+            state.value = ConnectionState.CONNECTING
+            if (attempts.size == 2) fallback.complete(Unit)
+        }
+        val started = System.nanoTime()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.connectActivePairing() }
+        try {
+            withTimeout(6_000) { fallback.await() }
+            assertTrue((System.nanoTime() - started) / 1_000_000 >= 4_000)
+            assertEquals(2, attempts.size)
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun persistedManualDisconnectPreventsAttempts() = runBlocking {
+        coEvery { config.get("manual_disconnect") } returns "true"
+        engine.connectActivePairing()
+        assertTrue(attempts.isEmpty())
+    }
+
+    @Test fun cancellationStopsFallbackAndReleasesMutex() = runBlocking {
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.connectActivePairing() }
+        job.cancelAndJoin()
+        state.value = ConnectionState.RETRYING
+        yield()
+        assertTrue(job.isCancelled)
+        assertEquals(listOf("wss://first"), attempts)
+        every { client.connect(any(), any(), any(), any()) } answers {
+            state.value = ConnectionState.CONNECTED
+        }
+        withTimeout(1_000) { engine.connectActivePairing() }
+    }
+
+    @Test fun failedEndpointRoundStillWaitsBeforeRetrying() = runBlocking {
+        every { client.connect(any(), any(), any(), any()) } answers {
+            attempts += thirdArg<String>()
+            state.value = ConnectionState.RETRYING
+        }
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            assertEquals(2, attempts.size)
+            delay(200)
+            assertEquals(2, attempts.size)
+            verify(exactly = 1) { client.disconnect(showDisconnected = true) }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+}

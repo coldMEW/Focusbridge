@@ -26,7 +26,11 @@ object MobileAppLockCrypto {
 
     fun verify(secret: String, salt: String?, expectedHash: String?): Boolean {
         if (salt.isNullOrBlank() || expectedHash.isNullOrBlank() || secret.isBlank()) return false
-        val actual = hashSecret(secret, salt)
+        val actual = try {
+            hashSecret(secret, salt)
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
         return MessageDigest.isEqual(actual.toByteArray(), expectedHash.toByteArray())
     }
 

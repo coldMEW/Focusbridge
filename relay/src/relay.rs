@@ -12,10 +12,8 @@ pub struct RelayState {
     pub max_pending: usize,
     pub pending_ttl: Duration,
     pub max_message_bytes: usize,
-    // Reserved for ping scheduler + rate limiter (future wiring).
-    #[allow(dead_code)]
+    // Relay heartbeat scheduling is handled by the WebSocket task.
     pub ping_interval: Duration,
-    #[allow(dead_code)]
     pub rate_limit_per_min: u32,
 }
 
@@ -56,19 +54,31 @@ impl RelayState {
         // Flush pending on desktop attach.
         if matches!(role, Role::Desktop) {
             sess.expire_pending(self.pending_ttl);
-            while let Some(front) = sess.pending.pop_front() {
+            while let Some(front) = sess.pending.front() {
                 if let Some(desktop) = &sess.desktop_tx {
-                    let _ = desktop.send(front.body);
+                    if desktop.send(front.body.clone()).is_err() {
+                        sess.desktop_tx = None;
+                        break;
+                    }
+                    sess.pending.pop_front();
+                } else {
+                    break;
                 }
             }
         }
         true
     }
 
-    pub async fn detach(&self, pair_id: &str, role: Role) {
-        if let Some(entry) = self.sessions.get(pair_id) {
-            let entry = entry.clone();
+    pub async fn detach(&self, pair_id: &str, role: Role, sender: &Tx) {
+        if let Some(entry) = self
+            .sessions
+            .get(pair_id)
+            .map(|entry| Arc::clone(entry.value()))
+        {
             let mut sess = entry.lock().await;
+            if !Self::owns_session(&sess, role, sender) {
+                return;
+            }
             match role {
                 Role::Android => sess.android_tx = None,
                 Role::Desktop => sess.desktop_tx = None,
@@ -77,43 +87,86 @@ impl RelayState {
         }
     }
 
-    /// Android → Desktop. Returns true if delivered live, false if queued.
-    pub async fn route_android_to_desktop(&self, pair_id: &str, body: String) -> RouteResult {
-        let Some(entry) = self.sessions.get(pair_id) else {
+    fn owns_session(sess: &Session, role: Role, sender: &Tx) -> bool {
+        let current = match role {
+            Role::Android => &sess.android_tx,
+            Role::Desktop => &sess.desktop_tx,
+        };
+        current
+            .as_ref()
+            .is_some_and(|active| active.same_channel(sender))
+    }
+
+    pub async fn is_current(&self, pair_id: &str, role: Role, sender: &Tx) -> bool {
+        let Some(entry) = self
+            .sessions
+            .get(pair_id)
+            .map(|entry| Arc::clone(entry.value()))
+        else {
+            return false;
+        };
+        let sess = entry.lock().await;
+        Self::owns_session(&sess, role, sender)
+    }
+
+    pub async fn route_from(
+        &self,
+        pair_id: &str,
+        role: Role,
+        sender: &Tx,
+        body: String,
+    ) -> RouteResult {
+        let Some(entry) = self
+            .sessions
+            .get(pair_id)
+            .map(|entry| Arc::clone(entry.value()))
+        else {
             return RouteResult::NoSession;
         };
-        let entry = entry.clone();
         let mut sess = entry.lock().await;
-        sess.touch();
-        if body.len() > self.max_message_bytes {
-            return RouteResult::TooLarge;
+        if !Self::owns_session(&sess, role, sender) {
+            return RouteResult::StaleConnection;
         }
-        if let Some(desktop) = &sess.desktop_tx {
-            let _ = desktop.send(body);
-            RouteResult::Delivered
-        } else {
-            sess.expire_pending(self.pending_ttl);
-            sess.enqueue_pending(body, self.max_pending);
-            RouteResult::Queued
+        if !sess.allow_message_at(role, self.rate_limit_per_min, std::time::Instant::now()) {
+            return RouteResult::RateLimited;
+        }
+        sess.touch();
+        match role {
+            Role::Android => self.send_to_desktop(&mut sess, body),
+            Role::Desktop => self.send_to_android(&mut sess, body),
         }
     }
 
-    pub async fn route_desktop_to_android(&self, pair_id: &str, body: String) -> RouteResult {
-        let Some(entry) = self.sessions.get(pair_id) else {
-            return RouteResult::NoSession;
+    /// Android → Desktop. Returns true if delivered live, false if queued.
+    fn send_to_desktop(&self, sess: &mut Session, body: String) -> RouteResult {
+        if body.len() > self.max_message_bytes {
+            return RouteResult::TooLarge;
+        }
+        let body = if let Some(desktop) = &sess.desktop_tx {
+            match desktop.send(body) {
+                Ok(()) => return RouteResult::Delivered,
+                Err(error) => error.0,
+            }
+        } else {
+            body
         };
-        let entry = entry.clone();
-        let mut sess = entry.lock().await;
-        sess.touch();
+        sess.desktop_tx = None;
+        sess.expire_pending(self.pending_ttl);
+        sess.enqueue_pending(body, self.max_pending);
+        RouteResult::Queued
+    }
+
+    fn send_to_android(&self, sess: &mut Session, body: String) -> RouteResult {
         if body.len() > self.max_message_bytes {
             return RouteResult::TooLarge;
         }
         if let Some(android) = &sess.android_tx {
-            let _ = android.send(body);
-            RouteResult::Delivered
-        } else {
-            RouteResult::Dropped
+            if android.send(body).is_ok() {
+                return RouteResult::Delivered;
+            }
         }
+        sess.android_tx = None;
+        RouteResult::Dropped
     }
 }
 
@@ -124,6 +177,8 @@ pub enum RouteResult {
     Dropped,
     NoSession,
     TooLarge,
+    StaleConnection,
+    RateLimited,
 }
 
 #[cfg(test)]
@@ -141,14 +196,146 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_desktop_send_keeps_message_for_reconnect() {
+        let state = new_state();
+        let (phone, _phone_rx) = unbounded_channel();
+        state
+            .attach("p", "k".into(), Role::Android, phone.clone())
+            .await;
+        let (tx, rx) = unbounded_channel();
+        state.attach("p", "k".into(), Role::Desktop, tx).await;
+        drop(rx);
+        assert_eq!(
+            state
+                .route_from("p", Role::Android, &phone, "keep".into())
+                .await,
+            RouteResult::Queued
+        );
+        let (tx, mut rx) = unbounded_channel();
+        state.attach("p", "k".into(), Role::Desktop, tx).await;
+        assert_eq!(rx.try_recv().unwrap(), "keep");
+    }
+
+    #[tokio::test]
+    async fn failed_pending_flush_preserves_queue() {
+        let state = new_state();
+        let (tx, _rx) = unbounded_channel();
+        state
+            .attach("p", "k".into(), Role::Android, tx.clone())
+            .await;
+        state
+            .route_from("p", Role::Android, &tx, "keep".into())
+            .await;
+        let (tx, rx) = unbounded_channel();
+        drop(rx);
+        state.attach("p", "k".into(), Role::Desktop, tx).await;
+        let (tx, mut rx) = unbounded_channel();
+        state.attach("p", "k".into(), Role::Desktop, tx).await;
+        assert_eq!(rx.try_recv().unwrap(), "keep");
+    }
+
+    #[tokio::test]
+    async fn closed_phone_channel_is_not_reported_as_delivered() {
+        let state = new_state();
+        let (desktop, _desktop_rx) = unbounded_channel();
+        state
+            .attach("p", "k".into(), Role::Desktop, desktop.clone())
+            .await;
+        let (tx, rx) = unbounded_channel();
+        state.attach("p", "k".into(), Role::Android, tx).await;
+        drop(rx);
+        assert_eq!(
+            state
+                .route_from("p", Role::Desktop, &desktop, "command".into())
+                .await,
+            RouteResult::Dropped
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_detach_does_not_remove_replacement() {
+        let state = new_state();
+        let (phone, _phone_rx) = unbounded_channel();
+        state
+            .attach("p", "k".into(), Role::Android, phone.clone())
+            .await;
+        let (old, _old_rx) = unbounded_channel();
+        let (new, mut new_rx) = unbounded_channel();
+        state
+            .attach("p", "k".into(), Role::Desktop, old.clone())
+            .await;
+        state.attach("p", "k".into(), Role::Desktop, new).await;
+        state.detach("p", Role::Desktop, &old).await;
+        assert_eq!(
+            state
+                .route_from("p", Role::Android, &phone, "new".into())
+                .await,
+            RouteResult::Delivered
+        );
+        assert_eq!(new_rx.try_recv().unwrap(), "new");
+    }
+
+    #[tokio::test]
+    async fn replaced_senders_cannot_route_in_either_direction() {
+        for role in [Role::Android, Role::Desktop] {
+            let state = new_state();
+            let (old, _old_rx) = unbounded_channel();
+            let (new, _new_rx) = unbounded_channel();
+            state.attach("p", "k".into(), role, old.clone()).await;
+            state.attach("p", "k".into(), role, new.clone()).await;
+            assert!(!state.is_current("p", role, &old).await);
+            assert!(state.is_current("p", role, &new).await);
+            assert_eq!(
+                state.route_from("p", role, &old, "stale".into()).await,
+                RouteResult::StaleConnection
+            );
+            state.detach("p", role, &old).await;
+            assert!(state.is_current("p", role, &new).await);
+            state.detach("p", role, &new).await;
+            assert!(!state.is_current("p", role, &new).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn reconnect_does_not_reset_message_budget() {
+        let state = RelayState::new(Duration::from_secs(300), 65536, Duration::from_secs(30), 1);
+        let (old, _rx) = unbounded_channel();
+        state
+            .attach("p", "k".into(), Role::Android, old.clone())
+            .await;
+        assert_eq!(
+            state
+                .route_from("p", Role::Android, &old, "one".into())
+                .await,
+            RouteResult::Queued
+        );
+        let (new, _rx) = unbounded_channel();
+        state
+            .attach("p", "k".into(), Role::Android, new.clone())
+            .await;
+        assert_eq!(
+            state
+                .route_from("p", Role::Android, &new, "two".into())
+                .await,
+            RouteResult::RateLimited
+        );
+    }
+
+    #[tokio::test]
     async fn android_to_desktop_delivers_when_both_attached() {
         let state = new_state();
         let (atx, _arx) = unbounded_channel::<String>();
         let (dtx, mut drx) = unbounded_channel::<String>();
-        assert!(state.attach("p1", "k".into(), Role::Android, atx).await);
+        assert!(
+            state
+                .attach("p1", "k".into(), Role::Android, atx.clone())
+                .await
+        );
         assert!(state.attach("p1", "k".into(), Role::Desktop, dtx).await);
         assert_eq!(
-            state.route_android_to_desktop("p1", "hello".into()).await,
+            state
+                .route_from("p1", Role::Android, &atx, "hello".into())
+                .await,
             RouteResult::Delivered
         );
         assert_eq!(drx.recv().await.unwrap(), "hello");
@@ -158,9 +345,15 @@ mod tests {
     async fn android_queues_when_desktop_absent_then_flushes_on_attach() {
         let state = new_state();
         let (atx, _arx) = unbounded_channel::<String>();
-        assert!(state.attach("p2", "k".into(), Role::Android, atx).await);
+        assert!(
+            state
+                .attach("p2", "k".into(), Role::Android, atx.clone())
+                .await
+        );
         assert_eq!(
-            state.route_android_to_desktop("p2", "q1".into()).await,
+            state
+                .route_from("p2", Role::Android, &atx, "q1".into())
+                .await,
             RouteResult::Queued
         );
         let (dtx, mut drx) = unbounded_channel::<String>();
@@ -182,10 +375,14 @@ mod tests {
         let state = RelayState::new(Duration::from_secs(300), 16, Duration::from_secs(30), 120);
         let (atx, _arx) = unbounded_channel::<String>();
         let (dtx, _drx) = unbounded_channel::<String>();
-        state.attach("p4", "k".into(), Role::Android, atx).await;
+        state
+            .attach("p4", "k".into(), Role::Android, atx.clone())
+            .await;
         state.attach("p4", "k".into(), Role::Desktop, dtx).await;
         assert_eq!(
-            state.route_android_to_desktop("p4", "x".repeat(64)).await,
+            state
+                .route_from("p4", Role::Android, &atx, "x".repeat(64))
+                .await,
             RouteResult::TooLarge
         );
     }

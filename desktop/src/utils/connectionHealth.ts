@@ -1,6 +1,7 @@
 import type { ConnectionState } from "../types";
 
-export const STALE_HEARTBEAT_MS = 120_000;
+// Backend probes allow 3s idle + 6s response; leave room for timer and IPC scheduling.
+export const STALE_HEARTBEAT_MS = 12_000;
 export const FIRST_HEARTBEAT_GRACE_MS = 30_000;
 
 export interface ConnectionHealthSnapshot {

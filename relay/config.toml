@@ -1,6 +1,10 @@
 bind = "0.0.0.0:8443"
 tls_cert_path = "certs/server.crt"
 tls_key_path = "certs/server.key"
+# Keep false unless deliberately running behind a trusted TLS proxy or locally.
+allow_plaintext = false
+# Set FOCUSBRIDGE_AUTH_TOKEN_SECRET to a persistent, securely generated secret
+# of at least 32 bytes. Do not commit it to this file.
 ping_interval_secs = 30
 pairing_ttl_secs = 300
 max_message_bytes = 65536

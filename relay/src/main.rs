@@ -21,7 +21,7 @@ mod tls;
 use crate::account_store::{AccountStore, LoginError, RegisterError};
 use crate::auth::{
     create_session_token, normalize_email, parse_role, verify_pairing_key, verify_session_token,
-    AuthError, Role,
+    AuthError,
 };
 use crate::config::Config;
 use crate::metrics::Metrics;
@@ -331,7 +331,7 @@ async fn ws_handler(
     let (tx, mut rx) = unbounded_channel::<String>();
     let attached = state
         .relay
-        .attach(&pair_id, expected.clone(), role, tx)
+        .attach(&pair_id, expected.clone(), role, tx.clone())
         .await;
     if !attached {
         state
@@ -354,23 +354,41 @@ async fn ws_handler(
     actix_web::rt::spawn(async move {
         // Outbound writer: forwards Tx channel to websocket.
         let mut outbound_session = ws_session.clone();
-        let writer = actix_web::rt::spawn(async move {
+        let mut writer = actix_web::rt::spawn(async move {
             while let Some(body) = rx.recv().await {
-                if outbound_session.text(body).await.is_err() {
+                if !matches!(
+                    tokio::time::timeout(Duration::from_secs(10), outbound_session.text(body))
+                        .await,
+                    Ok(Ok(()))
+                ) {
                     break;
                 }
             }
         });
 
-        // Inbound reader
-        while let Some(msg) = msg_stream.next().await {
+        // Writer failure and socket replacement must also terminate an idle reader.
+        let mut ownership_check = tokio::time::interval(Duration::from_secs(5));
+        let mut heartbeat = tokio::time::interval(relay.ping_interval);
+        let mut last_peer_activity = tokio::time::Instant::now();
+        loop {
+            let msg = tokio::select! {
+                _ = &mut writer => break,
+                _ = ownership_check.tick() => {
+                    if !relay.is_current(&pair_id_outbound, role, &tx).await { break; }
+                    if last_peer_activity.elapsed() >= relay.ping_interval.saturating_mul(3) { break; }
+                    continue;
+                }
+                _ = heartbeat.tick() => {
+                    if !matches!(tokio::time::timeout(Duration::from_secs(10), ws_session.ping(&[])).await, Ok(Ok(()))) { break; }
+                    continue;
+                }
+                msg = msg_stream.next() => match msg { Some(msg) => msg, None => break },
+            };
+            last_peer_activity = tokio::time::Instant::now();
             match msg {
                 Ok(Message::Text(text)) => {
                     let s = text.to_string();
-                    let result = match role {
-                        Role::Android => relay.route_android_to_desktop(&pair_id_outbound, s).await,
-                        Role::Desktop => relay.route_desktop_to_android(&pair_id_outbound, s).await,
-                    };
+                    let result = relay.route_from(&pair_id_outbound, role, &tx, s).await;
                     match result {
                         RouteResult::Delivered => {
                             metrics
@@ -387,19 +405,30 @@ async fn ws_handler(
                                 .messages_dropped_total
                                 .fetch_add(1, Ordering::Relaxed);
                         }
+                        RouteResult::StaleConnection => break,
+                        RouteResult::RateLimited => {
+                            metrics
+                                .messages_dropped_total
+                                .fetch_add(1, Ordering::Relaxed);
+                            break;
+                        }
                     }
                 }
                 Ok(Message::Ping(b)) => {
-                    let _ = ws_session.pong(&b).await;
+                    let sent =
+                        tokio::time::timeout(Duration::from_secs(10), ws_session.pong(&b)).await;
+                    if !matches!(sent, Ok(Ok(()))) {
+                        break;
+                    }
                 }
                 Ok(Message::Close(_)) | Err(_) => break,
                 _ => {}
             }
         }
 
-        relay.detach(&pair_id_outbound, role).await;
+        relay.detach(&pair_id_outbound, role, &tx).await;
         writer.abort();
-        let _ = ws_session.close(None).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), ws_session.close(None)).await;
     });
 
     Ok(response)
@@ -419,10 +448,10 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("config.toml"));
 
     let cfg = Config::load(&config_path).context("load config")?;
-    let auth_token_secret = cfg.auth_token_secret.clone().unwrap_or_else(|| {
-        warn!("FOCUSBRIDGE_AUTH_TOKEN_SECRET is not configured; generated sessions will reset on restart");
-        format!("dev_{}", uuid::Uuid::new_v4().simple())
-    });
+    let auth_token_secret = cfg
+        .auth_token_secret
+        .clone()
+        .context("auth token secret required")?;
     info!(
         bind = %cfg.bind,
         ping_interval_secs = cfg.ping_interval_secs,
@@ -467,12 +496,12 @@ async fn main() -> Result<()> {
     let cert = PathBuf::from(&cfg.tls_cert_path);
     let key = PathBuf::from(&cfg.tls_key_path);
 
-    let server = if cert.exists() && key.exists() {
+    let server = if cfg.should_use_tls(cert.exists(), key.exists())? {
         let tls_cfg = tls::load_tls_config(&cert, &key)?;
         server_builder.bind_rustls_0_22(&cfg.bind, tls_cfg)?
     } else {
         warn!(
-            "TLS cert/key missing at {} / {}; binding plaintext (dev only)",
+            "Explicit allow_plaintext opt-in: TLS cert/key absent at {} / {}; use only behind a trusted TLS proxy or for local development",
             cert.display(),
             key.display()
         );

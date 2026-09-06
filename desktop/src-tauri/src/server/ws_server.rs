@@ -1,6 +1,7 @@
 use crate::db::store;
 use crate::desktop_notifications;
-use crate::server::socket_io::send_text;
+use crate::server::heartbeat::PeerHeartbeat;
+use crate::server::socket_io::{send_frame_before, send_text, service_while, PendingMessages};
 use crate::state::AppState;
 use anyhow::{Context, Result};
 use focusbridge_core::handler::{handle_envelope, IncomingDecision};
@@ -8,14 +9,18 @@ use focusbridge_core::protocol::{Envelope, MessageType};
 use focusbridge_core::secure_envelope::{decrypt_payload, encrypt_envelope};
 use futures_util::StreamExt;
 use std::net::SocketAddr;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio::time::{interval, timeout, Duration};
+use tokio::time::{interval, sleep_until, timeout, Duration, Instant};
 use tokio_rustls::TlsAcceptor;
-use tokio_tungstenite::{accept_async, WebSocketStream};
+use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 use tracing::{error, info, warn};
 
 pub struct WsServerConfig {
@@ -89,24 +94,40 @@ where
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
     let mut active_pairing_key: Option<String> = None;
     let mut notified_connected = false;
-    let mut last_phone_seen_at = now_ms() as i64;
-    let mut stale_check = interval(Duration::from_secs(5));
+    let auth_deadline = Instant::now() + Duration::from_secs(10);
+    let mut heartbeat = PeerHeartbeat::new(Instant::now());
+    let mut stale_check = interval(Duration::from_secs(1));
+    let mut pending = PendingMessages::default();
+    let work_session = WorkSession {
+        state: &state,
+        app: &app,
+        sender: &outbound_tx,
+    };
 
     let result: Result<()> = async {
       loop {
+        if active_pairing_key.is_some() && !state.is_current_phone_sender(&outbound_tx) {
+            pending.clear();
+        }
         let msg = tokio::select! {
+            _ = sleep_until(heartbeat.deadline()), if active_pairing_key.is_some() => {
+                anyhow::bail!("phone heartbeat timed out");
+            }
+            _ = sleep_until(auth_deadline), if active_pairing_key.is_none() => {
+                anyhow::bail!("phone authentication timed out");
+            }
+            _ = sleep_until(heartbeat.wake_at()), if active_pairing_key.is_some() => {
+                if let Some(token) = heartbeat.probe(Instant::now()) {
+                    send_frame_before(&mut ws, Message::Ping(token), heartbeat.deadline()).await?;
+                }
+                continue;
+            }
             _ = stale_check.tick() => {
                 // Let a queued UNPAIR drain before closing a revoked session.
                 if active_pairing_key.is_some()
                     && !state.is_current_phone_sender(&outbound_tx)
                     && outbound_rx.is_empty()
                 {
-                    break;
-                }
-                if active_pairing_key.is_none() && now_ms() as i64 - last_phone_seen_at > 10_000 {
-                    break;
-                }
-                if active_pairing_key.is_some() && now_ms() as i64 - last_phone_seen_at > 180_000 {
                     break;
                 }
                 continue;
@@ -119,12 +140,14 @@ where
                     Some(key) => encrypt_envelope(key, &outbound).context("encrypt outbound envelope")?,
                     None => outbound,
                 };
-                send_text(&mut ws, body)
+                send_frame_before(&mut ws, Message::Text(body), heartbeat.deadline())
                     .await
                     .context("send outbound websocket message")?;
                 continue;
             }
-            inbound = ws.next() => {
+            inbound = async {
+                if let Some(frame) = pending.pop_front() { Some(Ok(frame)) } else { ws.next().await }
+            } => {
                 let Some(inbound) = inbound else {
                     break;
                 };
@@ -137,10 +160,17 @@ where
             continue;
         }
         if !msg.is_text() {
+            match msg {
+                Message::Close(_) => break,
+                Message::Pong(payload) if active_pairing_key.is_some()
+                    && heartbeat.acknowledge(&payload, Instant::now()) => {
+                    state.mark_heartbeat(now_ms() as i64);
+                }
+                _ => {}
+            }
             continue;
         }
         let text = msg.into_text().context("read websocket text")?;
-        last_phone_seen_at = now_ms() as i64;
         let mut envelope: Envelope =
             serde_json::from_str(&text).context("parse focusbridge envelope")?;
         // Application messages must never run before this socket authenticates.
@@ -170,9 +200,12 @@ where
             IncomingDecision::AuthAccepted => {
                 info!(peer = %peer, "phone authenticated");
                 active_pairing_key = Some(expected_key.clone());
-                last_phone_seen_at = now_ms() as i64;
                 state.set_phone_sender(outbound_tx.clone());
-                state.mark_transport("wss");
+                // The relay bridge reaches this server over loopback, so a loopback
+                // peer is a cross-network session rather than a LAN one. Reporting
+                // it as "wss" would tell the user they are on their local network.
+                let via_relay = peer.ip().is_loopback();
+                state.mark_transport(if via_relay { "relay" } else { "wss" });
                 let qr_device_id = envelope
                     .payload
                     .get("deviceId")
@@ -193,7 +226,13 @@ where
                     .current_pairing()
                     .map(|session| session.cert_fingerprint)
                     .unwrap_or_default();
-                let endpoint = peer.ip().to_string();
+                // A loopback address is the bridge, not the phone's real address;
+                // recording it would put 127.0.0.1 in the paired-device list.
+                let endpoint = if via_relay {
+                    "relay".to_string()
+                } else {
+                    peer.ip().to_string()
+                };
                 store::mark_pairing_connected(
                     &state.db_path,
                     device_name,
@@ -213,6 +252,8 @@ where
                 if !state.is_current_phone_sender(&outbound_tx) {
                     continue;
                 }
+                heartbeat = PeerHeartbeat::new(Instant::now());
+                state.mark_heartbeat(now_ms() as i64);
                 if let Ok(message) = store::rules_update_envelope(&state.db_path) {
                     let _ = outbound_tx.send(message);
                 }
@@ -231,53 +272,22 @@ where
                 .ok();
                 break;
             }
-            IncomingDecision::StoreNotification(payload) => {
-                let existed = payload
-                    .get("id")
-                    .and_then(|value| value.as_str())
-                    .map(|id| store::notification_exists(&state.db_path, id))
-                    .transpose()?
-                    .unwrap_or(false);
-                let is_new = !existed;
-                let row = store::upsert_notification(&state.db_path, &payload)?;
-                app.emit("focusbridge://notification", &row)?;
-                if is_new {
-                    desktop_notifications::show_phone_notification(&app, &row);
-                }
-                send_notification_ack(&mut ws, active_pairing_key.as_deref(), &row.id).await?;
-            }
-            IncomingDecision::StoreBatch(payload) => {
-                if let Some(items) = payload.get("notifications").and_then(|v| v.as_array()) {
-                    for item in items {
-                        // ACK sends yield, so ownership can change between batch items.
-                        if !state.is_current_phone_sender(&outbound_tx) {
+            IncomingDecision::StoreBatch(mut payload) => {
+                if let Some(items) = payload.get_mut("notifications").and_then(|v| v.as_array_mut()) {
+                    for item in std::mem::take(items) {
+                        if !work_session.apply(&mut ws, &mut heartbeat, &mut pending,
+                            IncomingDecision::StoreNotification(item), active_pairing_key.as_deref()).await? {
                             break;
                         }
-                        let existed = item
-                            .get("id")
-                            .and_then(|value| value.as_str())
-                            .map(|id| store::notification_exists(&state.db_path, id))
-                            .transpose()?
-                            .unwrap_or(false);
-                        let is_new = !existed;
-                        let row = store::upsert_notification(&state.db_path, item)?;
-                        app.emit("focusbridge://notification", &row)?;
-                        if is_new {
-                            desktop_notifications::show_phone_notification(&app, &row);
-                        }
-                        send_notification_ack(&mut ws, active_pairing_key.as_deref(), &row.id)
-                            .await?;
                     }
                 }
             }
-            IncomingDecision::RemoveNotification(id) => {
-                store::dismiss_notification(&state.db_path, &id)?;
-                app.emit("focusbridge://dismissal", id)?;
-            }
             IncomingDecision::RemoveBatch(ids) => {
                 for id in ids {
-                    store::dismiss_notification(&state.db_path, &id)?;
-                    app.emit("focusbridge://dismissal", id)?;
+                    if !work_session.apply(&mut ws, &mut heartbeat, &mut pending,
+                        IncomingDecision::RemoveNotification(id), active_pairing_key.as_deref()).await? {
+                        break;
+                    }
                 }
             }
             IncomingDecision::PingReceived => {
@@ -291,28 +301,20 @@ where
                     Some(key) => encrypt_envelope(key, &pong).context("encrypt pong envelope")?,
                     None => pong,
                 };
-                send_text(&mut ws, body)
+                send_frame_before(&mut ws, Message::Text(body), heartbeat.deadline())
                 .await
                 .context("send pong")?;
                 if state.is_current_phone_sender(&outbound_tx) {
                     app.emit("focusbridge://status", "PING")?;
                 }
             }
-            IncomingDecision::StatusUpdate(payload) => {
-                app.emit("focusbridge://phone-status", payload)?;
-            }
-            IncomingDecision::AppInventory(payload) => {
-                let rules = store::save_app_inventory(&state.db_path, &payload)?;
-                app.emit("focusbridge://app-rules", rules)?;
-                // AUTH preceded this snapshot; restored app preferences must reach Android too.
-                let rules_update = store::rules_update_envelope(&state.db_path)?;
-                let _ = outbound_tx.send(rules_update);
-            }
-            IncomingDecision::RulesAck(payload) => {
-                app.emit("focusbridge://rules-ack", payload)?;
+            work @ (IncomingDecision::StoreNotification(_) | IncomingDecision::RemoveNotification(_)
+                | IncomingDecision::StatusUpdate(_) | IncomingDecision::AppInventory(_)
+                | IncomingDecision::RulesAck(_)) => {
+                work_session.apply(&mut ws, &mut heartbeat, &mut pending, work,
+                    active_pairing_key.as_deref()).await?;
             }
             IncomingDecision::ManualDisconnect => {
-                timeout(Duration::from_secs(2), ws.close(None)).await.ok();
                 break;
             }
             IncomingDecision::Unknown => {}
@@ -321,14 +323,146 @@ where
       Ok(())
     }.await;
 
-    if state.clear_phone_sender_if_current(&outbound_tx) {
+    pending.clear();
+    let reason = result
+        .as_ref()
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_else(|| "socket closed".into());
+    if state.clear_phone_sender_if_current_with_reason(&outbound_tx, &reason) {
         store::mark_pairings_disconnected(&state.db_path)?;
         app.emit("focusbridge://connection", "DISCONNECTED")?;
         if notified_connected {
             desktop_notifications::show_connection_notification(&app, false);
         }
     }
+    timeout(Duration::from_secs(2), ws.close(None)).await.ok();
     result
+}
+
+struct WorkSession<'a> {
+    state: &'a AppState,
+    app: &'a AppHandle,
+    sender: &'a mpsc::UnboundedSender<String>,
+}
+
+// Dropping a timed-out work future cannot stop an already-running SQLite call, but it can
+// prevent its result from publishing events or ACKs after this socket has been abandoned.
+struct WorkPermit(Arc<AtomicBool>);
+
+impl Drop for WorkPermit {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+impl WorkSession<'_> {
+    async fn apply<S>(
+        &self,
+        ws: &mut WebSocketStream<S>,
+        heartbeat: &mut PeerHeartbeat,
+        pending: &mut PendingMessages,
+        decision: IncomingDecision,
+        pairing_key: Option<&str>,
+    ) -> Result<bool>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let permit = WorkPermit(Arc::new(AtomicBool::new(true)));
+        let allowed = permit.0.clone();
+        let state = self.state.clone();
+        let app = self.app.clone();
+        let sender = self.sender.clone();
+        let work = async move {
+            tokio::task::spawn_blocking(move || {
+                apply_work_item(decision, &state, &app, &sender, &allowed)
+            })
+            .await
+            .context("application work failed")?
+        };
+        let result = service_while(
+            ws,
+            heartbeat,
+            pending,
+            work,
+            || self.state.is_current_phone_sender(self.sender),
+            || {
+                if self.state.is_current_phone_sender(self.sender) {
+                    self.state.mark_heartbeat(now_ms() as i64);
+                }
+            },
+        )
+        .await;
+        drop(permit);
+        // Let the outer loop drain a queued desktop UNPAIR, but never start another work item.
+        if !self.state.is_current_phone_sender(self.sender) {
+            return Ok(false);
+        }
+        if let Some(id) = result? {
+            send_notification_ack(ws, pairing_key, &id, heartbeat.deadline()).await?;
+        }
+        Ok(true)
+    }
+}
+
+fn apply_work_item(
+    decision: IncomingDecision,
+    state: &AppState,
+    app: &AppHandle,
+    sender: &mpsc::UnboundedSender<String>,
+    allowed: &AtomicBool,
+) -> Result<Option<String>> {
+    let current = || allowed.load(Ordering::Acquire) && state.is_current_phone_sender(sender);
+    if !current() {
+        return Ok(None);
+    }
+    match decision {
+        IncomingDecision::StoreNotification(payload) => {
+            let existed = payload
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(|id| store::notification_exists(&state.db_path, id))
+                .transpose()?
+                .unwrap_or(false);
+            if !current() {
+                return Ok(None);
+            }
+            let row = store::upsert_notification(&state.db_path, &payload)?;
+            if !current() {
+                return Ok(None);
+            }
+            app.emit("focusbridge://notification", &row)?;
+            if !existed && current() {
+                desktop_notifications::show_phone_notification(app, &row);
+            }
+            return Ok(Some(row.id));
+        }
+        IncomingDecision::RemoveNotification(id) => {
+            store::dismiss_notification(&state.db_path, &id)?;
+            if current() {
+                app.emit("focusbridge://dismissal", id)?;
+            }
+        }
+        IncomingDecision::StatusUpdate(payload) => {
+            app.emit("focusbridge://phone-status", payload)?;
+        }
+        IncomingDecision::RulesAck(payload) => {
+            app.emit("focusbridge://rules-ack", payload)?;
+        }
+        IncomingDecision::AppInventory(payload) => {
+            let rules = store::save_app_inventory(&state.db_path, &payload)?;
+            if !current() {
+                return Ok(None);
+            }
+            app.emit("focusbridge://app-rules", rules)?;
+            let message = store::rules_update_envelope(&state.db_path)?;
+            if current() {
+                let _ = sender.send(message);
+            }
+        }
+        _ => anyhow::bail!("unexpected queued application work"),
+    }
+    Ok(None)
 }
 
 fn now_ms() -> u128 {
@@ -382,6 +516,7 @@ async fn send_notification_ack<S>(
     ws: &mut WebSocketStream<S>,
     pairing_key: Option<&str>,
     id: &str,
+    deadline: Instant,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -400,6 +535,8 @@ where
         Some(key) => encrypt_envelope(key, &ack).context("encrypt notification ack envelope")?,
         None => ack,
     };
-    send_text(ws, body).await.context("send notification ack")?;
+    send_frame_before(ws, Message::Text(body), deadline)
+        .await
+        .context("send notification ack")?;
     Ok(())
 }

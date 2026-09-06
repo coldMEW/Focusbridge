@@ -11,6 +11,30 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 
+/**
+ * Cross-network rendezvous, present from QR version 2 onwards. `url`, `accountKey`
+ * and `pairId` are routing metadata; `capability` is a revocable transport token
+ * that authorizes routing only. None of them can read application traffic.
+ */
+@Serializable
+data class QrRelayBlock(
+    val url: String,
+    val accountKey: String,
+    val pairId: String,
+    val capability: String,
+)
+
+/**
+ * Device-only key material for the Noise session: the desktop's static public key
+ * this phone pins, and the single-pairing enrollment pre-shared key. Neither is
+ * ever sent to the relay.
+ */
+@Serializable
+data class QrNoiseBlock(
+    val desktopKey: String,
+    val psk: String,
+)
+
 @Serializable
 data class QrPairingPayload(
     val v: Int,
@@ -22,6 +46,8 @@ data class QrPairingPayload(
     val deviceId: String,
     val pairingKey: String,
     val certFingerprint: String,
+    val relay: QrRelayBlock? = null,
+    val noise: QrNoiseBlock? = null,
 ) {
     fun syncEndpoint(): String {
         val normalizedMode = mode.uppercase()
@@ -62,15 +88,49 @@ private fun String.toRelayWebSocketBase(): String {
     }
 }
 
+/**
+ * What a pairing payload would do, shown to the user before anything is saved.
+ *
+ * A pairing hands a PC the ability to read this phone's notifications, so it must
+ * never be established by an intent alone: any installed app, or any web page,
+ * can send a `focusbridge://pair` link.
+ */
+data class PairingPreview(
+    val endpoint: String,
+    val certificateFingerprint: String,
+    val crossNetwork: Boolean,
+) {
+    /** The first characters of the fingerprint the desktop shows in its diagnostics. */
+    fun shortFingerprint(): String = certificateFingerprint.take(12).uppercase()
+}
+
 class PairingManager @Inject constructor(
     private val repository: PairingRepository,
     private val client: WebSocketClient,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Parses a payload for display without saving anything. Null when unusable. */
+    fun preview(rawQrPayload: String): PairingPreview? = runCatching {
+        val payload = json.decodeFromString(
+            QrPairingPayload.serializer(),
+            pairingPayloadFromInput(rawQrPayload),
+        )
+        PairingPreview(
+            endpoint = payload.syncEndpointCandidates().firstOrNull() ?: payload.endpoint,
+            certificateFingerprint = payload.certFingerprint,
+            crossNetwork = payload.relay != null && payload.noise != null,
+        )
+    }.getOrNull()
+
     suspend fun consume(rawQrPayload: String): PairingEntity {
         val payload = json.decodeFromString(QrPairingPayload.serializer(), pairingPayloadFromInput(rawQrPayload))
         val candidates = payload.syncEndpointCandidates()
+        // Relay details are accepted only as a matched set. A half-populated block
+        // would leave the phone dialing a relay it cannot authenticate to, so it is
+        // dropped and the pairing stays LAN-only.
+        val relay = payload.relay?.takeIf { payload.noise != null }
+        val noise = payload.noise?.takeIf { relay != null }
         val pairing = PairingEntity(
             deviceId = payload.deviceId,
             endpoint = candidates.firstOrNull() ?: payload.syncEndpoint(),
@@ -78,6 +138,12 @@ class PairingManager @Inject constructor(
             pairingKey = payload.pairingKey,
             certFingerprint = payload.certFingerprint,
             mode = payload.mode.uppercase(),
+            relayUrl = relay?.url.orEmpty(),
+            relayAccountKey = relay?.accountKey.orEmpty(),
+            relayPairId = relay?.pairId.orEmpty(),
+            relayCapability = relay?.capability.orEmpty(),
+            desktopPublicKey = noise?.desktopKey.orEmpty(),
+            enrollmentPsk = noise?.psk.orEmpty(),
         )
         repository.save(pairing)
         client.acceptReconnectRequest()

@@ -68,6 +68,10 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
+    // Use the maintained Android binding, not deprecated android-database-sqlcipher.
+    // Explicit AAR integration retains Room 2.6.1's SQLite support API and Kotlin 1.9 toolchain.
+    implementation("net.zetetic:sqlcipher-android:4.17.0@aar")
+    implementation("androidx.sqlite:sqlite:2.4.0")
     ksp(libs.room.compiler)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)

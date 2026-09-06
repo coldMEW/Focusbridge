@@ -14,6 +14,9 @@ import com.focusbridge.android.data.repository.AppRuleRepository
 import com.focusbridge.android.data.repository.ConfigRepository
 import com.focusbridge.android.data.repository.NotificationRepository
 import com.focusbridge.android.pairing.PhoneIdentity
+import com.focusbridge.android.security.DeviceIdentityProvider
+import com.focusbridge.android.sync.secure.PhoneSecureSession
+import com.focusbridge.android.sync.secure.SecureStep
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +35,9 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
+import okio.ByteString.Companion.toByteString
+import android.util.Base64
 import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,6 +56,7 @@ class WebSocketClient @Inject constructor(
     private val config: ConfigRepository,
     private val notifications: NotificationRepository,
     private val phoneIdentity: PhoneIdentity,
+    private val deviceIdentity: DeviceIdentityProvider,
 ) {
     private var socket: WebSocket? = null
     @Volatile private var connectionSerial = 0
@@ -57,6 +64,15 @@ class WebSocketClient @Inject constructor(
     @Volatile private var secureReady: Boolean = false
     @Volatile private var secureTransport: Boolean = false
     @Volatile private var lastPongAt: Long = 0L
+    /** Non-null only on the relay transport, where it is the sole security boundary. */
+    @Volatile private var secureSession: PhoneSecureSession? = null
+    @Volatile private var relayTransport: Boolean = false
+    /**
+     * True while a relay socket is open, including while the desktop peer is absent.
+     * The supervisor uses it to keep waiting on the relay instead of tearing the
+     * socket down every retry tick, which would also lose the peer-arrival signal.
+     */
+    @Volatile private var relayAttached: Boolean = false
     private var heartbeatJob: Job? = null
     private var sessionJob = SupervisorJob()
     @Volatile private var manuallyDisconnected = false
@@ -73,12 +89,20 @@ class WebSocketClient @Inject constructor(
 
     fun isManuallyDisconnected(): Boolean = manuallyDisconnected
 
+    /**
+     * True when a transport is established, even if the desktop has not yet been
+     * authenticated. Never treat this as a connected phone in the UI.
+     */
+    @Synchronized
+    fun isAwaitingPeer(): Boolean = relayAttached && socket != null && !isConnected()
+
     @Synchronized
     fun connect(
         pairing: PairingEntity,
         deviceName: String = phoneIdentity.deviceName,
         endpointOverride: String? = null,
         retryingOnFailure: Boolean = false,
+        useRelay: Boolean = false,
     ) {
         if (manuallyDisconnected) return
         disconnect(showDisconnected = !retryingOnFailure)
@@ -87,31 +111,51 @@ class WebSocketClient @Inject constructor(
         activePairingKey = pairing.pairingKey
         secureReady = false
         secureTransport = false
+        relayTransport = useRelay
         _state.value = ConnectionState.CONNECTING
-        val rawEndpoint = endpointOverride ?: pairing.endpoint
-        val endpoint = when {
-            rawEndpoint.startsWith("wss://") -> rawEndpoint
-            rawEndpoint.startsWith("ws://") -> "wss://${rawEndpoint.removePrefix("ws://")}"
-            else -> "wss://$rawEndpoint"
-        }
-        require(pairing.mode.equals("LOCAL", ignoreCase = true)) {
-            "Relay sync requires the new end-to-end pairing protocol"
-        }
-        require(pairing.certFingerprint.matches(Regex("[a-fA-F0-9]{64}"))) {
-            "Refresh the desktop QR and pair again: a valid certificate fingerprint is required"
-        }
-        val request = Request.Builder().url(endpoint).build()
-        secureTransport = endpoint.startsWith("wss://") && pairing.certFingerprint.isNotBlank()
-        val client = if (secureTransport) {
-            okHttpClient.withPinnedCertificate(pairing.certFingerprint)
+
+        val client: OkHttpClient
+        val request: Request
+        if (useRelay) {
+            require(pairing.supportsRelay()) { "This pairing has no relay credentials; scan a new desktop QR" }
+            // The relay is a public HTTPS origin, so it is validated against the
+            // system trust store. Certificate pinning belongs to the LAN transport,
+            // whose desktop certificate is self-signed and pinned from the QR.
+            client = okHttpClient
+            request = Request.Builder()
+                .url(pairing.relaySocketUrl())
+                .header("Authorization", "Bearer " + pairing.relayCapability)
+                .build()
         } else {
-            okHttpClient
+            val rawEndpoint = endpointOverride ?: pairing.endpoint
+            val endpoint = when {
+                rawEndpoint.startsWith("wss://") -> rawEndpoint
+                rawEndpoint.startsWith("ws://") -> "wss://" + rawEndpoint.removePrefix("ws://")
+                else -> "wss://" + rawEndpoint
+            }
+            require(pairing.mode.equals("LOCAL", ignoreCase = true)) {
+                "Relay sync requires the new end-to-end pairing protocol"
+            }
+            require(pairing.certFingerprint.matches(Regex("[a-fA-F0-9]{64}"))) {
+                "Refresh the desktop QR and pair again: a valid certificate fingerprint is required"
+            }
+            secureTransport = true
+            client = okHttpClient.withPinnedCertificate(pairing.certFingerprint)
+            request = Request.Builder().url(endpoint).build()
         }
+
         socket = client.newWebSocket(
             request,
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response): Unit = synchronized(this@WebSocketClient) {
                     if (serial != connectionSerial) { webSocket.cancel(); return@synchronized }
+                    if (useRelay) {
+                        // Wait for the relay to report the desktop peer. Starting a
+                        // handshake into an absent peer would burn a session the
+                        // relay cannot deliver.
+                        relayAttached = true
+                        return@synchronized
+                    }
                     webSocket.send(
                         Protocol.auth(
                             pairingKey = pairing.pairingKey,
@@ -124,33 +168,25 @@ class WebSocketClient @Inject constructor(
 
                 override fun onMessage(webSocket: WebSocket, text: String): Unit = synchronized(this@WebSocketClient) {
                     if (serial != connectionSerial) return@synchronized
+                    if (useRelay) {
+                        // On the relay transport every inbound text frame is relay
+                        // control metadata. Application data is always binary, so a
+                        // text frame can never be mistaken for a peer message.
+                        onRelayControl(webSocket, text, pairing, serial, retryingOnFailure)
+                        return@synchronized
+                    }
                     var envelope = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return@synchronized
                     if (envelope.type == MessageType.ENCRYPTED) {
                         val payload = envelope.payload as? JsonObject ?: return@synchronized
                         val decrypted = runCatching { SecureEnvelope.decrypt(pairing.pairingKey, payload) }.getOrNull() ?: return@synchronized
                         envelope = runCatching { Protocol.decodeEnvelope(decrypted) }.getOrNull() ?: return@synchronized
                     }
-                    when (envelope.type) {
-                        MessageType.AUTH_OK -> {
-                            secureReady = secureTransport
-                            lastPongAt = System.currentTimeMillis()
-                            updateState(serial, ConnectionState.CONNECTED)
-                            startHeartbeat(webSocket, pairing.pairingKey, serial)
-                            sendAppInventory(webSocket, pairing.pairingKey, serial)
-                        }
-                        MessageType.AUTH_FAILED -> finishConnection(
-                            serial,
-                            if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
-                        )
-                        MessageType.PONG -> {
-                            lastPongAt = System.currentTimeMillis()
-                        }
-                        MessageType.NOTIFICATION_ACK -> applyNotificationAck(envelope)
-                        MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope, pairing.pairingKey)
-                        MessageType.DESKTOP_ACTION -> applyDesktopAction(envelope)
-                        MessageType.UNPAIR -> applyManualDisconnect(serial)
-                        else -> Unit
-                    }
+                    dispatch(webSocket, envelope, pairing, serial, retryingOnFailure)
+                }
+
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString): Unit = synchronized(this@WebSocketClient) {
+                    if (serial != connectionSerial || !useRelay) return@synchronized
+                    onRelayFrame(webSocket, bytes, pairing, deviceName, serial, retryingOnFailure)
                 }
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -177,16 +213,210 @@ class WebSocketClient @Inject constructor(
         )
     }
 
+    /**
+     * Handles one relay control frame. `relay.peer_ready` carries a generation that
+     * changes whenever either endpoint reconnects, so it always starts a brand new
+     * Noise session rather than reusing keys across peers.
+     */
+    private fun onRelayControl(
+        webSocket: WebSocket,
+        text: String,
+        pairing: PairingEntity,
+        serial: Int,
+        retryingOnFailure: Boolean,
+    ) {
+        when (runCatching { Protocol.relayControlType(text) }.getOrNull()) {
+            "relay.peer_ready" -> startSecureSession(webSocket, pairing, serial, retryingOnFailure)
+            "relay.peer_unavailable" -> {
+                // Keep the relay socket so the desktop's arrival still reaches us,
+                // but stop advertising a peer that is not there.
+                closeSecureSession()
+                secureReady = false
+                if (serial == connectionSerial && _state.value == ConnectionState.CONNECTED) {
+                    _state.value = if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun startSecureSession(
+        webSocket: WebSocket,
+        pairing: PairingEntity,
+        serial: Int,
+        retryingOnFailure: Boolean,
+    ) {
+        closeSecureSession()
+        secureReady = false
+        var privateKey: ByteArray? = null
+        var psk: ByteArray? = null
+        try {
+            privateKey = deviceIdentity.privateKey()
+            psk = decodeKey(pairing.enrollmentPsk, PhoneSecureSession.KEY_BYTES, "enrollment key")
+            val desktopKey = decodeKey(pairing.desktopPublicKey, PhoneSecureSession.KEY_BYTES, "desktop key")
+            val pairId = decodeHex(pairing.relayPairId, PhoneSecureSession.PAIR_ID_BYTES)
+            val session = PhoneSecureSession.create()
+            // start() consumes and wipes both secrets on every outcome.
+            val first = session.start(privateKey, psk, pairId, desktopKey)
+            privateKey = null
+            psk = null
+            secureSession = session
+            webSocket.send(first.toByteString())
+        } catch (failure: Throwable) {
+            android.util.Log.w("FocusBridgeSync", "Secure session could not start", failure)
+            closeSecureSession()
+            finishConnection(serial, if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED)
+        } finally {
+            // Native code wipes these itself; this covers a library-load or
+            // invocation failure that never reached native code.
+            privateKey?.fill(0)
+            psk?.fill(0)
+        }
+    }
+
+    private fun onRelayFrame(
+        webSocket: WebSocket,
+        bytes: ByteString,
+        pairing: PairingEntity,
+        deviceName: String,
+        serial: Int,
+        retryingOnFailure: Boolean,
+    ) {
+        val session = secureSession ?: return
+        val step = try {
+            session.receive(bytes.toByteArray())
+        } catch (failure: Throwable) {
+            // A Noise session that has seen a bad frame can no longer tell replay
+            // from ordinary loss, so it is discarded rather than retried.
+            android.util.Log.w("FocusBridgeSync", "Secure session failed; reconnecting", failure)
+            closeSecureSession()
+            finishConnection(serial, if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED)
+            return
+        }
+        when (step) {
+            is SecureStep.Send -> {
+                step.frames.forEach { webSocket.send(it.toByteString()) }
+                if (session.isReady) {
+                    // Only now is the desktop authenticated as the pinned device.
+                    secureReady = true
+                    sendEnvelope(
+                        webSocket,
+                        pairing.pairingKey,
+                        Protocol.auth(
+                            pairingKey = pairing.pairingKey,
+                            deviceId = pairing.deviceId,
+                            deviceName = deviceName,
+                            phoneInstallId = phoneIdentity.installId,
+                        ),
+                    )
+                }
+            }
+            is SecureStep.Deliver -> {
+                val plaintext = step.plaintext
+                val envelope = try {
+                    runCatching { Protocol.decodeEnvelope(String(plaintext, Charsets.UTF_8)) }.getOrNull()
+                } finally {
+                    plaintext.fill(0)
+                }
+                if (envelope != null) dispatch(webSocket, envelope, pairing, serial, retryingOnFailure)
+            }
+            SecureStep.Continue -> Unit
+        }
+    }
+
+    private fun dispatch(
+        webSocket: WebSocket,
+        envelope: Envelope,
+        pairing: PairingEntity,
+        serial: Int,
+        retryingOnFailure: Boolean,
+    ) {
+        when (envelope.type) {
+            MessageType.AUTH_OK -> {
+                if (!relayTransport) secureReady = secureTransport
+                lastPongAt = System.currentTimeMillis()
+                updateState(serial, ConnectionState.CONNECTED)
+                startHeartbeat(webSocket, pairing.pairingKey, serial)
+                sendAppInventory(webSocket, pairing.pairingKey, serial)
+            }
+            MessageType.AUTH_FAILED -> finishConnection(
+                serial,
+                if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+            )
+            MessageType.PONG -> {
+                lastPongAt = System.currentTimeMillis()
+            }
+            MessageType.NOTIFICATION_ACK -> applyNotificationAck(envelope)
+            MessageType.RULES_UPDATE -> applyRulesUpdate(webSocket, envelope, pairing.pairingKey)
+            MessageType.DESKTOP_ACTION -> applyDesktopAction(envelope)
+            MessageType.UNPAIR -> applyManualDisconnect(serial)
+            else -> Unit
+        }
+    }
+
+    private fun closeSecureSession() {
+        secureSession?.close()
+        secureSession = null
+    }
+
+    private fun decodeKey(value: String, size: Int, label: String): ByteArray {
+        val decoded = try {
+            Base64.decode(value, Base64.NO_WRAP)
+        } catch (failure: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid " + label + " in this pairing", failure)
+        }
+        if (decoded.size != size) {
+            decoded.fill(0)
+            throw IllegalArgumentException("Invalid " + label + " length in this pairing")
+        }
+        return decoded
+    }
+
+    private fun decodeHex(value: String, size: Int): ByteArray {
+        require(value.length == size * 2 && value.all { it in "0123456789abcdef" }) {
+            "Invalid relay pair identifier in this pairing"
+        }
+        return ByteArray(size) { value.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+    }
+
     @Synchronized
     fun send(text: String): Boolean {
         if (!isConnected()) return false
-        val key = activePairingKey
-        val body = if (secureReady && key != null) SecureEnvelope.encrypt(key, text) else text
-        val accepted = socket?.send(body) == true
+        val key = activePairingKey ?: return false
+        val webSocket = socket ?: return false
+        val accepted = sendEnvelope(webSocket, key, text)
         if (!accepted && _state.value == ConnectionState.CONNECTED) {
             disconnect()
         }
         return accepted
+    }
+
+    /**
+     * Sends one plaintext FocusBridge envelope over whichever transport is active.
+     *
+     * On the relay the record is sealed into ordered Noise frames; a partial write
+     * cannot be retried, so a refused frame fails the whole send and the session is
+     * discarded by the caller. On the LAN it keeps the pairing-key envelope format.
+     */
+    private fun sendEnvelope(webSocket: WebSocket, pairingKey: String, text: String): Boolean {
+        if (!relayTransport) {
+            return webSocket.send(if (secureReady) SecureEnvelope.encrypt(pairingKey, text) else text)
+        }
+        val session = secureSession ?: return false
+        val frames = try {
+            session.seal(text.toByteArray(Charsets.UTF_8))
+        } catch (failure: Throwable) {
+            android.util.Log.w("FocusBridgeSync", "Secure send failed; session discarded", failure)
+            closeSecureSession()
+            return false
+        }
+        for (frame in frames) {
+            if (!webSocket.send(frame.toByteString())) {
+                closeSecureSession()
+                return false
+            }
+        }
+        return true
     }
 
     @Synchronized
@@ -198,6 +428,9 @@ class WebSocketClient @Inject constructor(
         activePairingKey = null
         secureReady = false
         secureTransport = false
+        relayTransport = false
+        relayAttached = false
+        closeSecureSession()
         stopHeartbeat()
         if (showDisconnected && _state.value != ConnectionState.DISCONNECTED) {
             _state.value = ConnectionState.DISCONNECTED
@@ -209,10 +442,9 @@ class WebSocketClient @Inject constructor(
         setManualDisconnect(true)
         val message = Protocol.disconnectRequest()
         val key = activePairingKey
-        if (key != null) {
-            socket?.sendSecure(key, message)
-        } else {
-            socket?.send(message)
+        val webSocket = socket
+        if (webSocket != null) {
+            if (key != null) sendEnvelope(webSocket, key, message) else webSocket.send(message)
         }
         disconnect(showDisconnected = true)
     }
@@ -261,7 +493,7 @@ class WebSocketClient @Inject constructor(
             }
             synchronized(this@WebSocketClient) {
                 if (serial == connectionSerial && isConnected()) {
-                    webSocket.sendSecure(pairingKey, Protocol.appInventory(apps))
+                    sendEnvelope(webSocket, pairingKey, Protocol.appInventory(apps))
                 }
             }
         }
@@ -288,7 +520,7 @@ class WebSocketClient @Inject constructor(
                         finishConnection(serial, ConnectionState.DISCONNECTED)
                         return@launch
                     }
-                    webSocket.sendSecure(pairingKey, Protocol.ping())
+                    sendEnvelope(webSocket, pairingKey, Protocol.ping())
                 }
             }
         }
@@ -320,7 +552,9 @@ class WebSocketClient @Inject constructor(
                 config.set("priority_keywords", update.priorityKeywords.joinToString(","))
                 config.set("blocked_keywords", update.blockedKeywords.joinToString(","))
                 config.set("favorite_contacts", update.favoriteContacts.joinToString(","))
-                webSocket.send(SecureEnvelope.encrypt(pairingKey, Protocol.rulesAck(update.appRules.size)))
+                synchronized(this@WebSocketClient) {
+                    sendEnvelope(webSocket, pairingKey, Protocol.rulesAck(update.appRules.size))
+                }
             }
         }
     }
@@ -374,10 +608,6 @@ class WebSocketClient @Inject constructor(
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
         manager.notify(RECONNECT_NOTIFICATION_ID, notification)
-    }
-
-    private fun WebSocket.sendSecure(pairingKey: String, message: String) {
-        send(if (secureReady) SecureEnvelope.encrypt(pairingKey, message) else message)
     }
 
     private companion object {

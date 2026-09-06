@@ -95,6 +95,17 @@ pub fn create_password_hash(password: &str) -> Result<PasswordHash, AuthError> {
 }
 
 pub fn verify_password(password: &str, expected: &PasswordHash) -> Result<bool, AuthError> {
+    // Bound persisted parameters before decoding or performing expensive PBKDF2 work.
+    if !(1..=PASSWORD_ITERATIONS).contains(&expected.iterations)
+        || expected.salt_hex.len() != 32
+        || expected.hash_hex.len() != 64
+        || !expected
+            .hash_hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(AuthError::InvalidToken);
+    }
     let salt = hex::decode(&expected.salt_hex).map_err(|_| AuthError::InvalidToken)?;
     let actual = hash_password_with_salt(password, &salt, expected.iterations);
     Ok(constant_time_eq(
@@ -133,7 +144,7 @@ pub fn verify_session_token(
     let expires_at = parts[2]
         .parse::<u64>()
         .map_err(|_| AuthError::InvalidToken)?;
-    if now_epoch_secs > expires_at {
+    if now_epoch_secs >= expires_at {
         return Err(AuthError::ExpiredToken);
     }
     let user_id = URL_SAFE_NO_PAD
@@ -266,6 +277,81 @@ mod tests {
         assert_eq!(
             verify_session_token(&token, "test-secret", 1_011),
             Err(AuthError::ExpiredToken)
+        );
+    }
+
+    #[test]
+    fn signed_token_expires_at_exact_boundary() {
+        let token = create_session_token("user_123", "test-secret", 1_000, 10);
+        assert!(verify_session_token(&token, "test-secret", 1_009).is_ok());
+        assert_eq!(
+            verify_session_token(&token, "test-secret", 1_010),
+            Err(AuthError::ExpiredToken)
+        );
+        let token = create_session_token("user_123", "test-secret", 1_000, 0);
+        assert_eq!(
+            verify_session_token(&token, "test-secret", 1_000),
+            Err(AuthError::ExpiredToken)
+        );
+    }
+
+    #[test]
+    fn password_verification_rejects_malformed_hashes() {
+        let valid = PasswordHash {
+            salt_hex: "00".repeat(16),
+            hash_hex: "00".repeat(32),
+            iterations: 1,
+        };
+        for salt_hex in [
+            String::new(),
+            "00".repeat(15),
+            "00".repeat(17),
+            "zz".repeat(16),
+        ] {
+            let hash = PasswordHash {
+                salt_hex,
+                ..valid.clone()
+            };
+            assert_eq!(
+                verify_password("password", &hash),
+                Err(AuthError::InvalidToken)
+            );
+        }
+        for hash_hex in [
+            String::new(),
+            "00".repeat(31),
+            "00".repeat(33),
+            "zz".repeat(32),
+        ] {
+            let hash = PasswordHash {
+                hash_hex,
+                ..valid.clone()
+            };
+            assert_eq!(
+                verify_password("password", &hash),
+                Err(AuthError::InvalidToken)
+            );
+        }
+        let hash = PasswordHash {
+            iterations: 0,
+            ..valid
+        };
+        assert_eq!(
+            verify_password("password", &hash),
+            Err(AuthError::InvalidToken)
+        );
+    }
+
+    #[test]
+    fn password_verification_rejects_excessive_work() {
+        let hash = PasswordHash {
+            salt_hex: "00".repeat(16),
+            hash_hex: "00".repeat(32),
+            iterations: PASSWORD_ITERATIONS + 1,
+        };
+        assert_eq!(
+            verify_password("password", &hash),
+            Err(AuthError::InvalidToken)
         );
     }
 }

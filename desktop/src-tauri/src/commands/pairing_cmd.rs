@@ -2,6 +2,9 @@ use crate::db::store;
 use crate::pairing::device_store::PairingSession;
 use crate::pairing::qr_generator::{make_qr, QrOutput, QrPayload};
 use crate::state::AppState;
+use crate::sync::{relay_api, relay_identity};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use focusbridge_core::qr::{QrNoise, QrRelay};
 use rand::RngCore;
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -122,8 +125,12 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
         .as_ref()
         .map(|session| session.expires_at)
         .unwrap_or_else(|| now + 5 * 60 * 1000);
+    // The relay block is included only as a complete, usable set. If anything is
+    // missing the QR stays a working LAN pairing rather than advertising a relay
+    // the phone could not authenticate to.
+    let (relay, noise) = relay_pairing_blocks(&state);
     let payload = QrPayload {
-        v: 1,
+        v: if relay.is_some() { 2 } else { 1 },
         mode: "local".into(),
         endpoint: endpoint.clone(),
         endpoint_candidates,
@@ -132,6 +139,8 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
         device_id: device_id.clone(),
         pairing_key: pairing_key.clone(),
         cert_fingerprint: state.cert.fingerprint_sha256_hex.clone(),
+        relay,
+        noise,
     };
     state.set_pairing(PairingSession {
         device_id,
@@ -140,6 +149,37 @@ pub fn generate_pairing_qr(state: tauri::State<'_, AppState>) -> Result<QrOutput
         expires_at,
     });
     make_qr(&payload, expires_at).map_err(|e| e.to_string())
+}
+
+/// Builds the cross-network half of the QR, or `(None, None)` when the relay is
+/// not configured or its key material cannot be read. A relay failure must never
+/// break LAN pairing, so every error here degrades to a LAN-only QR.
+fn relay_pairing_blocks(state: &AppState) -> (Option<QrRelay>, Option<QrNoise>) {
+    let Ok(Some(pair)) = relay_api::current_pair(&state.db_path) else {
+        return (None, None);
+    };
+    if pair.expires_at <= now_millis() {
+        return (None, None);
+    }
+    let Ok(Some(secrets)) = relay_identity::pair_secrets(&state.db_path, &pair.pair_id) else {
+        return (None, None);
+    };
+    let Ok(identity) = relay_identity::identity(&state.db_path) else {
+        return (None, None);
+    };
+    (
+        Some(QrRelay {
+            url: pair.url.clone(),
+            account_key: pair.account_key.clone(),
+            pair_id: pair.pair_id.clone(),
+            // Only the phone's capability leaves this machine.
+            capability: pair.phone_capability.clone(),
+        }),
+        Some(QrNoise {
+            desktop_key: B64.encode(identity.public_key()),
+            psk: B64.encode(secrets.psk),
+        }),
+    )
 }
 
 #[tauri::command]

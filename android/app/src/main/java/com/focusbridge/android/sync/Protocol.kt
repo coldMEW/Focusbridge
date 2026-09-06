@@ -5,6 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
@@ -192,6 +194,19 @@ object Protocol {
 
     fun decodeEnvelope(text: String): Envelope =
         json.decodeFromString(Envelope.serializer(), text)
+
+    /**
+     * Reads the `type` of a relay control frame. These are the relay's own bounded
+     * metadata, not peer data: they are never decrypted, never trusted to carry
+     * application content, and an unrecognised or malformed frame yields null.
+     */
+    fun relayControlType(text: String): String? {
+        if (text.length > RELAY_CONTROL_MAX) return null
+        val element = runCatching { json.parseToJsonElement(text) }.getOrNull() as? JsonObject ?: return null
+        return (element["type"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+    }
+
+    private const val RELAY_CONTROL_MAX = 512
 
     fun decodeRulesUpdate(payload: JsonElement): RulesUpdatePayload =
         json.decodeFromJsonElement(RulesUpdatePayload.serializer(), payload)

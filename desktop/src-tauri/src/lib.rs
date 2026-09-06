@@ -10,6 +10,10 @@ pub mod tray;
 
 use crate::state::AppState;
 use anyhow::Context;
+
+/// The LAN listener's port. The relay bridge dials it over loopback so both
+/// transports converge on one tested application path.
+const LOCAL_WS_PORT: u16 = 9173;
 use tauri::{Emitter, Manager, WindowEvent};
 use tracing::info;
 
@@ -32,8 +36,10 @@ pub fn run() {
                 .app_data_dir()
                 .context("resolve app data directory")?;
             let db_path = app_data_dir.join("focusbridge.db");
-            let cert = pairing::cert_manager::load_or_generate(&app_data_dir)?;
+            let database = db::encrypted::initialize(&db_path)?;
             db::store::init(&db_path)?;
+            app.manage(database);
+            let cert = pairing::cert_manager::load_or_generate(&app_data_dir)?;
             let app_state = AppState::new(db_path, cert);
             app.manage(app_state.clone());
             info!("focusbridge-desktop setup");
@@ -42,9 +48,12 @@ pub fn run() {
                 server::ws_server::WsServerConfig {
                     bind: "0.0.0.0:9173".parse().expect("valid websocket bind"),
                 },
-                app_state,
+                app_state.clone(),
                 handle,
             ));
+            // Cross-network sync. This is idle until the user enables the relay,
+            // and it never affects the LAN listener above.
+            tauri::async_runtime::spawn(sync::relay_client::start(app_state, LOCAL_WS_PORT));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -65,6 +74,10 @@ pub fn run() {
             commands::pairing_cmd::delete_paired_device,
             commands::pairing_cmd::disconnect_phone,
             commands::pairing_cmd::request_device_reconnect,
+            commands::relay_cmd::relay_status,
+            commands::relay_cmd::relay_enable,
+            commands::relay_cmd::relay_disable,
+            commands::relay_cmd::relay_set_url,
             commands::settings_cmd::get_settings,
             commands::settings_cmd::set_lock_timeout_minutes,
             commands::settings_cmd::set_study_mode,
