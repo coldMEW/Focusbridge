@@ -227,10 +227,10 @@ class SyncEngineTest {
     }
 
     @Test fun aManualDisconnectIsNotLiftedByTheReconnectionSwitch() = runBlocking {
-        // Disconnect has to mean disconnect. The switch governs ordinary drops,
-        // not a decision the user made, and lifting one reconnected seconds after
-        // they asked for the opposite. The disconnect is never lifted here: it is
-        // not accepted on this phone's behalf, and nothing syncs unasked.
+        // Disconnect has to mean disconnect: this phone stops dialing desktops.
+        // It never accepts a pending request on the user's behalf either, and it
+        // never dials the saved endpoints -- the only thing it may do is wait to
+        // be asked for by name, which is what awaitingRequest marks.
         coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
         coEvery { config.get("manual_disconnect") } returns "true"
         every { client.isManuallyDisconnected() } returns true
@@ -242,17 +242,18 @@ class SyncEngineTest {
             delay(200)
             verify(exactly = 0) { client.acceptReconnectRequest() }
             verify(exactly = 0) {
-                client.connect(any(), any(), any(), any(), any(), requireApproval = false)
+                client.connect(any(), any(), any(), any(), any(), any(), awaitingRequest = false)
             }
         } finally {
             job.cancelAndJoin()
         }
     }
 
-    @Test fun aDisconnectedPhoneWaitsForApprovalRatherThanSyncing() = runBlocking {
-        // It stays findable so "reconnect this phone" can work across networks,
-        // but only ever approval-gated: nothing syncs until the user accepts,
-        // and the switch cannot turn that into a silent reconnection.
+    @Test fun aDisconnectedPhoneWithTheSwitchOnReconnectsWithoutAsking() = runBlocking {
+        // The switch says a PC that has connected before may reconnect without
+        // asking, and it means it. Being disconnected does not turn that into a
+        // prompt: this phone waits to be asked for by name, and being asked is a
+        // deliberate act at the other end.
         coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
         coEvery { config.get("manual_disconnect") } returns "true"
         every { client.isManuallyDisconnected() } returns true
@@ -262,10 +263,42 @@ class SyncEngineTest {
         val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
         try {
             verify(atLeast = 1) {
-                client.connect(relayPairing, any(), any(), any(), useRelay = true, requireApproval = true)
+                client.connect(
+                    relayPairing,
+                    any(),
+                    any(),
+                    any(),
+                    useRelay = true,
+                    requireApproval = false,
+                    awaitingRequest = true,
+                )
             }
-            verify(exactly = 0) {
-                client.connect(any(), any(), any(), any(), any(), requireApproval = false)
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun aDisconnectedPhoneWithTheSwitchOffWaitsToBeAsked() = runBlocking {
+        // Switched off, the same wait has to prompt. Nothing is decrypted and no
+        // notification leaves this phone before the user accepts.
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
+        coEvery { config.get("manual_disconnect") } returns "true"
+        every { client.isManuallyDisconnected() } returns true
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            verify(atLeast = 1) {
+                client.connect(
+                    relayPairing,
+                    any(),
+                    any(),
+                    any(),
+                    useRelay = true,
+                    requireApproval = true,
+                    awaitingRequest = true,
+                )
             }
         } finally {
             job.cancelAndJoin()

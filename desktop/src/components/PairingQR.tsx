@@ -12,6 +12,9 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
   const [qr, setQr] = useState<QrData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Full size is the reliable way to scan: the side panel is narrow, and a phone
+  // held at arm's length needs the modules to be several pixels across.
+  const [enlarged, setEnlarged] = useState(false);
 
   // `deliberate` means the user pressed the button, and only that makes this PC
   // reachable over the relay. The panel also renders on load, on window focus
@@ -86,13 +89,29 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
             {/* Square at every width: fixing both dimensions and then capping the
                 width stretched the code into a rectangle in the narrow panel, and
                 a distorted QR does not scan. Nearest-neighbour scaling keeps the
-                module edges hard, which is what a camera needs to resolve them. */}
-            <img
-              src={`data:image/png;base64,${qr.pngBase64}`}
-              alt="Pairing QR"
-              style={{ imageRendering: "pixelated" }}
-              className={`aspect-square h-auto w-full ${compact ? "max-w-[224px]" : "max-w-[360px]"}`}
-            />
+                module edges hard, which is what a camera needs to resolve them.
+
+                Size is not cosmetic here. A camera needs several pixels per
+                module, and in the side panel this was capped at 224px, which left
+                well under three of them -- unreadable however long you held the
+                phone there. It now fills the panel, and either code opens full
+                screen, which is the size to scan from. */}
+            <button
+              type="button"
+              onClick={() => setEnlarged(true)}
+              title="Show the code full size"
+              className="block w-full rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-study"
+            >
+              <img
+                src={`data:image/png;base64,${qr.pngBase64}`}
+                alt="Pairing QR"
+                style={{ imageRendering: "pixelated" }}
+                className={`aspect-square h-auto w-full ${compact ? "max-w-[288px]" : "max-w-[360px]"}`}
+              />
+            </button>
+            <p className="mt-2 text-center text-xs text-text-muted">
+              Hard to scan? Click the code to fill the screen.
+            </p>
           </div>
           <button
             onClick={() => refreshQr(true)}
@@ -116,6 +135,24 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
             compact ? "max-w-[224px]" : "max-w-[360px]"
           }`}
         />
+      )}
+      {enlarged && qr && (
+        <div
+          role="dialog"
+          aria-label="Pairing code, full size"
+          onClick={() => setEnlarged(false)}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black/70 p-6"
+        >
+          <div className="rounded-[32px] bg-white p-6 shadow-soft">
+            <img
+              src={`data:image/png;base64,${qr.pngBase64}`}
+              alt="Pairing QR, full size"
+              style={{ imageRendering: "pixelated" }}
+              className="aspect-square h-auto w-[min(70vh,70vw,560px)]"
+            />
+          </div>
+          <p className="text-sm text-white/90">Scan this, then tap anywhere to close.</p>
+        </div>
       )}
       <p className="mt-4 text-xs text-text-muted">
         {minutes === null ? "Generating secure local payload..." : `Expires in ${minutes} min`}

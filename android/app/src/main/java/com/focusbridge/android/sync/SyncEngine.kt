@@ -28,17 +28,13 @@ class SyncEngine @Inject constructor(
     suspend fun maintainActivePairing() {
         while (currentCoroutineContext().isActive) {
             try {
-                // Disconnect means disconnect. A manual disconnect outranks the
-                // reconnection switch, which governs ordinary drops rather than a
-                // decision the user made; letting it lift one reconnected seconds
-                // after they asked for the opposite. Only the user resumes it:
-                // accepting a request, pressing retry, or scanning a code.
+                // Disconnect means disconnect: this phone does not dial a desktop
+                // after the user has let one go. It does stay findable, which is
+                // what makes "reconnect this phone" work from another network --
+                // and being asked for by name is a deliberate act at the other
+                // end, not this phone undoing the user's decision. Whether that
+                // request prompts is the switch's business, not the disconnect's.
                 if (isManuallyDisconnected()) {
-                    // Present, but silent. Nothing is sent or decrypted until the
-                    // user accepts, which is what makes "reconnect this phone"
-                    // possible from another network at all. The desktop is paused
-                    // by the same disconnect, so nothing arrives to ask about
-                    // until someone there asks for this phone by name.
                     if (!client.isAwaitingPeer()) awaitApproval()
                 } else if (client.isConnected()) {
                     flushPending()
@@ -56,11 +52,15 @@ class SyncEngine @Inject constructor(
     }
 
     /**
-     * Waits at the relay for the desktop to ask, without syncing anything.
+     * Waits at the relay to be asked for, without dialing anyone.
      *
-     * No session is established and nothing is sent until the user accepts, so
-     * this respects the disconnect while still being findable. A pairing with no
-     * relay stays entirely offline, because there is no way to be asked.
+     * Whether being asked then prompts is the switch's decision, and only the
+     * switch's: on means a PC that has connected before reconnects with no
+     * notification, which is what the setting says on the tin. That does not
+     * reopen the disconnect, because nothing here reaches for a desktop -- it
+     * waits to be asked for by name, and a paused desktop never asks.
+     *
+     * A pairing with no relay stays entirely offline, having no way to be asked.
      */
     private suspend fun awaitApproval() {
         connectMutex.withLock {
@@ -72,7 +72,8 @@ class SyncEngine @Inject constructor(
                 deviceName = DeviceInfo.deviceName,
                 retryingOnFailure = true,
                 useRelay = true,
-                requireApproval = true,
+                requireApproval = !autoReconnectEnabled(),
+                awaitingRequest = true,
             )
         }
     }

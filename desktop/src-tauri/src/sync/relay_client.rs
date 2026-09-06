@@ -162,6 +162,20 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
                             .await
                     {
                         warn!(error = %error, "relay phone session ended");
+                        // A phone whose key this PC has not pinned cannot get past
+                        // the handshake, and until now nothing here noticed: the
+                        // pairing looked fine over the LAN and simply never worked
+                        // across networks. A rejection while a pairing code is on
+                        // screen is that phone asking to be enrolled, and only a
+                        // phone holding that code's pre-shared key can complete
+                        // the enrolment, so the next attempt is allowed to.
+                        if should_enroll_after(&error, state.pairing_code_is_live()) {
+                            info!(
+                                "a phone this PC does not know was rejected while a pairing \
+                                 code is on screen; enrolling it on the next attempt"
+                            );
+                            state.arm_enrollment();
+                        }
                         // Reconnect rather than waiting here. The relay announces a
                         // peer only when one joins, so a socket that outlives its
                         // session would sit waiting for an event that cannot arrive
@@ -185,6 +199,29 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
     Ok(established)
 }
 
+/// Whether this session should enroll a phone rather than authenticate one.
+///
+/// A pinned phone proves its identity on every connection, so an ordinary
+/// reconnect must not re-enroll: replacing a pinned key is how a different
+/// handset would quietly take a phone's place. Enrollment is for a phone with no
+/// pinned key here yet -- a new one, or one that was reset or reinstalled -- and
+/// for the explicit request to replace one.
+fn enrollment_needed(has_pinned_phone: bool, explicitly_armed: bool) -> bool {
+    !has_pinned_phone || explicitly_armed
+}
+
+/// Whether a failed session was a phone asking to be paired.
+///
+/// A phone whose key this PC has not pinned cannot get past the handshake. That
+/// used to fail silently forever: the pairing worked over the LAN and simply
+/// never worked across networks. A rejection while a pairing code is on screen is
+/// that phone asking to be enrolled, and only a phone holding that code's
+/// pre-shared key can complete the enrollment, so the next attempt may allow it.
+/// A timeout or a dropped socket says nothing about identity and must not.
+fn should_enroll_after(error: &anyhow::Error, pairing_code_is_live: bool) -> bool {
+    pairing_code_is_live && error.to_string().contains("handshake rejected")
+}
+
 /// Runs one phone session: Noise handshake, mutual confirmation, then a pinned
 /// loopback bridge into the existing local server.
 async fn run_session(
@@ -196,23 +233,24 @@ async fn run_session(
     local_port: u16,
 ) -> Result<()> {
     let pair_bytes = pair_id_bytes(&pair.pair_id)?;
-    // A phone that is already pinned proves that identity on every connection.
-    // Enrollment is the exception, and it is armed only when the user asks for a
-    // phone by generating a fresh pairing code: reusing that state on every
-    // reconnect would re-enroll a known phone instead of authenticating it, and
-    // simply having the pairing screen open is not a request to replace anything.
+    // A phone that is already pinned proves that identity on every connection, so
+    // an ordinary reconnect authenticates rather than re-enrolling: replacing a
+    // pinned key is how a different handset would quietly take a phone's place.
     //
-    // Arming it does authorize replacing an already-pinned phone, because a
-    // handset that was reset, replaced or reinstalled has a new identity key and
-    // could otherwise never pair with this PC again.
-    // A pinned phone authenticates on every connection. Enrollment happens only
-    // when the user has asked for a phone by generating a fresh pairing code.
-    let mut session = match (secrets.phone, state.enrollment_armed()) {
-        (Some(phone), false) => Session::desktop(identity, &secrets.psk, pair_bytes, phone),
-        (_, true) => Session::desktop_enrollment(identity, &secrets.psk, pair_bytes),
-        (None, false) => {
-            bail!("no phone is enrolled for this relay pair; open the desktop pairing screen")
-        }
+    // Enrollment is the exception, for a phone that has no pinned key here yet --
+    // a new one, or one that was reset or reinstalled. It is authorized by the
+    // pre-shared key from the pairing code, which only a phone that scanned this
+    // PC's QR can hold, and the handshake fails without it.
+    let enrolling = enrollment_needed(secrets.phone.is_some(), state.enrollment_armed());
+    info!(
+        enrolling,
+        pinned = secrets.phone.is_some(),
+        "starting relay secure session"
+    );
+    let mut session = if enrolling {
+        Session::desktop_enrollment(identity, &secrets.psk, pair_bytes)
+    } else {
+        Session::desktop(identity, &secrets.psk, pair_bytes, secrets.phone.unwrap())
     }
     .context("start the secure session")?;
 
@@ -485,5 +523,33 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertificate {
         rustls::crypto::ring::default_provider()
             .signature_verification_algorithms
             .supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_phone_with_no_pinned_key_enrolls_and_a_pinned_one_authenticates() {
+        // The case that was broken: a reinstalled phone has no pinned key here,
+        // and waiting for a button to be pressed left it unable to pair at all
+        // across networks while the LAN path kept working.
+        assert!(enrollment_needed(false, false));
+        assert!(!enrollment_needed(true, false));
+        // Replacing a pinned phone stays an explicit act.
+        assert!(enrollment_needed(true, true));
+    }
+
+    #[test]
+    fn only_a_rejected_handshake_beside_a_live_code_opens_enrollment() {
+        let rejected = anyhow::anyhow!("relay handshake rejected: secure-session authentication failed");
+        assert!(should_enroll_after(&rejected, true));
+        // No code on screen means nobody is pairing, so a rejection is a
+        // rejection and the pinned phone stays pinned.
+        assert!(!should_enroll_after(&rejected, false));
+        // A timeout or a dropped socket says nothing about who the phone is.
+        assert!(!should_enroll_after(&anyhow::anyhow!("relay handshake timed out"), true));
+        assert!(!should_enroll_after(&anyhow::anyhow!("connection reset"), true));
     }
 }

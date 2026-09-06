@@ -128,11 +128,15 @@ class WebSocketClient @Inject constructor(
         retryingOnFailure: Boolean = false,
         useRelay: Boolean = false,
         requireApproval: Boolean = false,
+        awaitingRequest: Boolean = false,
     ) {
-        // While paused, only an approval-gated connection is allowed. It carries
-        // no data until the user accepts, so it honours the disconnect while
-        // keeping this phone findable by a desktop that asks for it by name.
-        if (manuallyDisconnected && !requireApproval) return
+        // After a manual disconnect this phone stops dialing desktops, but it may
+        // still wait to be asked for by name -- that is what makes reconnecting it
+        // from another network possible. Waiting is the only thing allowed then,
+        // and it is said outright rather than inferred from whether the user will
+        // be prompted: the prompt is the switch's decision, and tying the two
+        // together is what made a switched-on phone unable to reconnect at all.
+        if (manuallyDisconnected && !awaitingRequest) return
         disconnect(showDisconnected = !retryingOnFailure)
         sessionJob = SupervisorJob()
         val serial = ++connectionSerial

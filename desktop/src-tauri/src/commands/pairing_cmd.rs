@@ -189,7 +189,16 @@ pub fn generate_pairing_qr(
         cert_fingerprint: state.cert.fingerprint_sha256_hex.clone(),
         expires_at,
     });
-    make_qr(&payload, expires_at).map_err(|e| e.to_string())
+    let qr = make_qr(&payload, expires_at).map_err(|e| e.to_string())?;
+    // How the code was encoded decides whether a phone can read it at all, and
+    // it is invisible once rendered. The length is safe to record; the link
+    // itself is pairing material and is not.
+    tracing::info!(
+        compact = qr.deep_link.starts_with("focusbridge://pair?c="),
+        characters = qr.deep_link.len(),
+        "pairing code generated"
+    );
+    Ok(qr)
 }
 
 /// Builds the cross-network half of the QR, or `(None, None)` when the relay is
