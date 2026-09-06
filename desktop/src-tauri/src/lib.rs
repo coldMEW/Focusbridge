@@ -78,6 +78,7 @@ pub fn run() {
             commands::relay_cmd::relay_enable,
             commands::relay_cmd::relay_disable,
             commands::relay_cmd::relay_set_url,
+            commands::relay_cmd::relay_set_auto_connect,
             commands::settings_cmd::get_settings,
             commands::settings_cmd::set_lock_timeout_minutes,
             commands::settings_cmd::set_study_mode,

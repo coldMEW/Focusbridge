@@ -25,6 +25,14 @@ class SyncEngineTest {
     )
     private val engine = SyncEngine(pairings, notifications, client, config)
     private val attempts = mutableListOf<String>()
+    private val relayPairing = pairing.copy(
+        relayUrl = "https://relay.example",
+        relayAccountKey = "a".repeat(64),
+        relayPairId = "b".repeat(32),
+        relayCapability = "C".repeat(43),
+        desktopPublicKey = "AAAA",
+        enrollmentPsk = "BBBB",
+    )
 
     @Before fun setup() {
         mockkObject(DeviceInfo)
@@ -129,17 +137,57 @@ class SyncEngineTest {
         }
     }
 
-    @Test fun supervisorDoesNotDialTheSavedDesktopWhenAutoReconnectIsOff() = runBlocking {
+    @Test fun autoReconnectOffNeverDialsALocalAddress() = runBlocking {
         coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
         val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
         try {
-            // Silently reattaching to whichever PC answers first is exactly what
-            // this switch exists to prevent when several are paired.
+            // A local address can only be reached by dialing it, so there is no way
+            // to ask the user first. That path stays off entirely.
             assertTrue(attempts.isEmpty())
             delay(200)
             assertTrue(attempts.isEmpty())
         } finally {
             job.cancelAndJoin()
+        }
+    }
+
+    /** Every attempt fails at once, so the engine reaches the relay leg. */
+    private fun failEveryAttempt() {
+        every { client.connect(any(), any(), any(), any(), any(), any()) } answers {
+            state.value = ConnectionState.RETRYING
+        }
+    }
+
+    @Test fun autoReconnectOffStillJoinsTheRelayButAsksBeforeLettingAPcIn() = runBlocking {
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        withTimeout(2_000) { engine.connectActivePairing() }
+
+        // Staying reachable is the point: a PC on another network cannot dial this
+        // phone, so the phone has to be waiting at the relay in order to be asked.
+        verify(exactly = 1) {
+            client.connect(relayPairing, any(), any(), any(), useRelay = true, requireApproval = true)
+        }
+        // And it must not have dialed a local address, which cannot ask first.
+        verify(exactly = 0) {
+            client.connect(any(), any(), any(), any(), useRelay = false, requireApproval = any())
+        }
+    }
+
+    @Test fun autoReconnectOnDialsLocallyThenJoinsTheRelayWithoutAsking() = runBlocking {
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        withTimeout(2_000) { engine.connectActivePairing() }
+
+        verify(exactly = 2) {
+            client.connect(any(), any(), any(), any(), useRelay = false, requireApproval = false)
+        }
+        verify(exactly = 1) {
+            client.connect(relayPairing, any(), any(), any(), useRelay = true, requireApproval = false)
         }
     }
 

@@ -46,6 +46,12 @@ type RelaySocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 pub async fn start(state: AppState, local_port: u16) {
     let mut backoff = MIN_BACKOFF;
     loop {
+        // When automatic connection is off this PC stays off the relay until the
+        // user asks for a phone, so it cannot attach to one they did not choose.
+        let automatic = relay_api::auto_connect(&state.db_path).unwrap_or(true);
+        if !automatic && !state.relay_connection_requested() {
+            state.await_relay_request().await;
+        }
         match attempt(&state, local_port).await {
             Ok(true) => backoff = MIN_BACKOFF,
             Ok(false) => {}
@@ -87,6 +93,9 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
     .context("relay connection timed out")?
     .context("connect to the relay")?;
     info!("relay socket established");
+    // The request has been honoured; a later disconnect should not silently
+    // reconnect when the user has asked for that not to happen.
+    state.take_relay_request();
 
     // The relay reports the peer's presence on this same socket, so the desktop
     // can stay attached and wait rather than polling for the phone.

@@ -35,6 +35,26 @@ struct CreatedPair {
     capabilities: Capabilities,
 }
 
+const AUTO_CONNECT_SETTING: &str = "relay.auto_connect";
+
+/// Whether this PC rejoins the last paired phone on its own.
+///
+/// Off, the relay stays idle until the user picks a phone from previous
+/// connections or shows a new QR. That matters when several phones have been
+/// paired: reattaching to whichever one answers first is not always wanted.
+/// Defaults to on so an upgrade does not quietly stop syncing.
+pub fn auto_connect(db_path: &Path) -> Result<bool> {
+    Ok(store::get_setting(db_path, AUTO_CONNECT_SETTING)?.as_deref() != Some("false"))
+}
+
+pub fn set_auto_connect(db_path: &Path, enabled: bool) -> Result<()> {
+    store::set_setting(
+        db_path,
+        AUTO_CONNECT_SETTING,
+        if enabled { "true" } else { "false" },
+    )
+}
+
 pub fn relay_url(db_path: &Path) -> Result<String> {
     Ok(store::get_setting(db_path, URL_SETTING)?
         .map(|value| value.trim().to_string())

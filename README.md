@@ -1,107 +1,119 @@
 # FocusBridge
 
-FocusBridge is a local-first Android and desktop app for routing phone notifications to a desktop workspace. It is built for users who want phone awareness without keeping the phone open.
+**Your phone's notifications, on your PC. From any network. Without your phone in your hand.**
 
-The v1 desktop app runs a local secure WebSocket server. The Android app captures notifications through Android notification access, filters them, and syncs them to the desktop over LAN or hotspot pairing.
+FocusBridge sends the notifications that matter from your Android phone to your
+Windows desktop, filters out the ones that don't, and keeps working whether the
+two devices share a Wi-Fi network or are on opposite sides of the internet.
 
-## Features
+## The problem
 
-- Android notification capture and desktop delivery
-- QR and manual pairing
-- Local LAN/hotspot sync
-- WSS transport with certificate pinning
-- Message-level encrypted envelopes
-- Heartbeat and reconnect handling
-- Notification ACK and retry queue
-- Masked Peek privacy mode
-- Study Mode filtering
-- Priority, blocked keyword, contact, and app rules
-- Desktop app control for synced Android apps
-- Native desktop notifications
-- Tray/background behavior
-- Firebase email/password account entry plus local app lock
+You put your phone face-down to focus, and then you pick it up anyway — because
+you might be missing something. Usually you aren't. But checking costs more than
+the glance: you unlock the phone, and twenty minutes later you are somewhere else
+entirely.
 
-## Repository
+The phone is not the problem. Not knowing is.
 
-```text
-android/        Android app, Kotlin, Compose, Room, Hilt
-desktop/        Desktop app, Tauri, Rust, React
-relay/          Optional relay service planned for v1.1 cross-network sync
-shared/         Shared protocol reference
-docs/           Design notes, release checklist, project memory
-```
+FocusBridge moves the knowing to the screen you are already looking at, and
+applies a filter on the way, so a two-factor code reaches you instantly and a
+sale notification does not reach you at all.
 
-## Requirements
+## What it does
 
-- Windows 10/11 for the primary desktop build
-- Node.js and pnpm
-- Rust stable with the MSVC toolchain
-- Visual Studio C++ Build Tools
-- Android Studio or Android SDK with JDK 17
-- Android phone running API 26 or newer
+**Notifications on your desktop.** Messages, codes, calls, delivery updates —
+they appear on your PC as they arrive on your phone, with the app icon, sender
+and time.
 
-## Development
+**Rules that actually silence things.** Mute whole apps. Promote the ones that
+matter. Flag priority keywords and favourite contacts so they always surface.
+Block keywords so promotional noise never leaves the phone. The rules are set on
+the desktop and enforced *on the phone*, so filtered notifications are never
+transmitted at all.
 
-Desktop:
+**Study Mode.** One switch that suppresses low-priority noise while leaving
+urgent alerts and security codes visible.
 
-```powershell
-cd desktop
-pnpm install
-pnpm tauri dev
-```
+**Masked Peek.** Notification bodies stay hidden behind a chip until you hover
+or click. Useful when your screen is shared or someone is standing behind you.
 
-Android:
+**Triage, not a second inbox.** Pin what needs an answer, dismiss what doesn't,
+clear by age, and keep a searchable log of what came through.
 
-```powershell
-cd android
-.\gradlew.bat assembleDebug
-```
+**Two ways to connect, automatically.** On the same Wi-Fi, your devices talk
+directly to each other and nothing leaves your network. Off it — phone on mobile
+data, laptop on café Wi-Fi, either device behind a router that blocks incoming
+connections — they meet at a relay instead. FocusBridge prefers the local path
+whenever it exists and falls back without you doing anything.
 
-Relay:
-
-```powershell
-cd relay
-cargo test
-```
-
-## Production Builds
-
-Desktop installer:
-
-```powershell
-cd desktop
-pnpm install
-pnpm tauri build --ci
-```
-
-Android APK:
-
-```powershell
-cd android
-.\gradlew.bat assembleRelease
-```
-
-Current Android release signing uses the debug signing config for local testing. Replace it with a real release keystore before public distribution.
-
-## Reset Local Data
-
-Desktop app data is stored under:
-
-```text
-%APPDATA%\com.focusbridge.desktop
-%LOCALAPPDATA%\com.focusbridge.desktop
-```
-
-Android app data can be reset from a machine with `adb`:
-
-```powershell
-adb shell pm clear com.focusbridge.android
-```
+**You decide what reconnects.** Both ends can be told to reconnect
+automatically, or to ask first. With asking turned on, your phone stays
+reachable but notifies you before letting a PC in.
 
 ## Privacy
 
-FocusBridge is designed around local-first sync. Notification content is stored locally in the desktop and Android app databases. Relay support is planned as optional infrastructure and should only carry private data after the encrypted sync path is enabled for that mode.
+Notification content is readable by exactly two machines: your phone and your
+paired PC.
 
-## License
+- **Nothing is stored in a cloud.** There is no server holding your messages.
+- **The relay cannot read what it carries.** When your devices are on different
+  networks, traffic passes through a relay — sealed end to end, with keys that
+  never leave your devices. The relay routes bytes it has no way to decrypt, and
+  keeps nothing.
+- **On disk it is encrypted too.** Notification history is stored encrypted on
+  both the phone and the PC, with the key held by the operating system's own
+  keystore rather than a password you type.
+- **Pairing is deliberate.** A PC gets access only when you scan its code and
+  confirm, and only after you have compared the security code it shows. You can
+  revoke a device at any time, from either end.
+- **Local sync needs no account.** Same-network use works with no sign-in and no
+  internet connection at all. An account is only needed to turn on the
+  cross-network relay.
 
-AGPL-3.0. See [LICENSE](LICENSE).
+## How it is built
+
+| Part | Technology |
+| --- | --- |
+| Phone app | Kotlin, Jetpack Compose, Room, Hilt, CameraX |
+| Desktop app | Tauri, Rust, React, TypeScript |
+| Local link | WebSockets over TLS, with the desktop's certificate pinned from the pairing code |
+| Cross-network link | Cloudflare Workers with SQLite Durable Objects, on the free tier |
+| End-to-end encryption | Noise protocol (`Noise_XXpsk3_25519_ChaChaPoly_SHA256`), one Rust implementation shared by both platforms |
+| Storage | SQLCipher, keyed through Windows DPAPI and the Android Keystore |
+| Accounts | Firebase Authentication, used only to authorize the relay |
+
+The encryption engine is deliberately written once, in Rust, and loaded by the
+Android app through JNI. Two implementations of the same protocol are two
+implementations that can disagree, and a disagreement in a handshake is a
+security bug.
+
+## What it is not
+
+FocusBridge mirrors notifications. It is not a full phone-on-your-desktop
+product: it does not send SMS, place calls, mirror your screen, or transfer
+files. Those are deliberately out of scope rather than half-built, and the
+comparison against Microsoft Phone Link is written down honestly in
+[`docs/phone-link-gap-analysis.md`](docs/phone-link-gap-analysis.md).
+
+It also cannot reach a phone that is switched off, out of signal, or has been
+force-stopped by the system, and no notification app can.
+
+## Status
+
+Working and in daily use by its author, with cross-network sync verified on real
+hardware — phone on cellular, PC on Wi-Fi. Release signing and a broader device
+matrix are still outstanding before a public release; the remaining gates are
+tracked in [`docs/`](docs/).
+
+## Documentation
+
+- [Cross-network architecture](docs/cross-network-architecture.md) — how the two
+  transports work and what each component is trusted with
+- [Phone Link comparison](docs/phone-link-gap-analysis.md) — feature-by-feature,
+  including what is missing
+- [Security model](docs/security-model.md) and [privacy policy](docs/privacy-policy.md)
+- [Architecture](docs/architecture.md)
+
+## Licence
+
+See [LICENSE](LICENSE).

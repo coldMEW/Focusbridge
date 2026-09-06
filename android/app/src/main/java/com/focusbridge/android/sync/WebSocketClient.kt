@@ -91,6 +91,12 @@ class WebSocketClient @Inject constructor(
      * socket down every retry tick, which would also lose the peer-arrival signal.
      */
     @Volatile private var relayAttached: Boolean = false
+    /**
+     * Set when the relay reports a desktop while this phone is configured to ask
+     * first. Holding the peer here rather than refusing it is what lets a PC
+     * reach this phone from any network without being able to connect silently.
+     */
+    private var pendingApproval: (() -> Unit)? = null
     private var heartbeatJob: Job? = null
     private var sessionJob = SupervisorJob()
     @Volatile private var manuallyDisconnected = false
@@ -121,6 +127,7 @@ class WebSocketClient @Inject constructor(
         endpointOverride: String? = null,
         retryingOnFailure: Boolean = false,
         useRelay: Boolean = false,
+        requireApproval: Boolean = false,
     ) {
         if (manuallyDisconnected) return
         disconnect(showDisconnected = !retryingOnFailure)
@@ -190,7 +197,7 @@ class WebSocketClient @Inject constructor(
                         // On the relay transport every inbound text frame is relay
                         // control metadata. Application data is always binary, so a
                         // text frame can never be mistaken for a peer message.
-                        onRelayControl(webSocket, text, pairing, serial, retryingOnFailure)
+                        onRelayControl(webSocket, text, pairing, serial, retryingOnFailure, requireApproval)
                         return@synchronized
                     }
                     val decoded = runCatching { Protocol.decodeEnvelope(text) }.getOrNull() ?: return@synchronized
@@ -238,12 +245,24 @@ class WebSocketClient @Inject constructor(
         pairing: PairingEntity,
         serial: Int,
         retryingOnFailure: Boolean,
+        requireApproval: Boolean,
     ) {
         when (runCatching { Protocol.relayControlType(text) }.getOrNull()) {
-            "relay.peer_ready" -> startSecureSession(webSocket, pairing, serial, retryingOnFailure)
+            "relay.peer_ready" -> {
+                if (requireApproval) {
+                    // Remember how to continue, then ask. Nothing is decrypted and
+                    // no notification leaves this phone until the user accepts.
+                    pendingApproval = { startSecureSession(webSocket, pairing, serial, retryingOnFailure) }
+                    _reconnectRequest.value = DesktopReconnectRequest(pairing.deviceId, System.currentTimeMillis())
+                    showReconnectNotification()
+                } else {
+                    startSecureSession(webSocket, pairing, serial, retryingOnFailure)
+                }
+            }
             "relay.peer_unavailable" -> {
                 // Keep the relay socket so the desktop's arrival still reaches us,
                 // but stop advertising a peer that is not there.
+                pendingApproval = null
                 closeSecureSession()
                 secureReady = false
                 if (serial == connectionSerial && _state.value == ConnectionState.CONNECTED) {
@@ -445,6 +464,7 @@ class WebSocketClient @Inject constructor(
         secureTransport = false
         relayTransport = false
         relayAttached = false
+        pendingApproval = null
         closeSecureSession()
         stopHeartbeat()
         if (showDisconnected && _state.value != ConnectionState.DISCONNECTED) {
@@ -468,6 +488,12 @@ class WebSocketClient @Inject constructor(
     fun acceptReconnectRequest() {
         setManualDisconnect(false)
         _reconnectRequest.value = null
+        // A desktop waiting at the relay can be answered immediately; there is no
+        // need to wait for the next supervisor tick.
+        pendingApproval?.let { start ->
+            pendingApproval = null
+            start()
+        }
     }
 
     private fun setManualDisconnect(value: Boolean) {

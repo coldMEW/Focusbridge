@@ -32,7 +32,9 @@ class SyncEngine @Inject constructor(
                     // Nothing to do until the user pairs or accepts a reconnect.
                 } else if (client.isConnected()) {
                     flushPending()
-                } else if (!client.isAwaitingPeer() && autoReconnectEnabled()) {
+                } else if (!client.isAwaitingPeer()) {
+                    // Always reachable, even with automatic reconnection off: the
+                    // relay leg below asks for approval instead of connecting.
                     connectActivePairing()
                 }
             } catch (cancelled: CancellationException) {
@@ -60,7 +62,11 @@ class SyncEngine @Inject constructor(
             val pairing = pairings.active() ?: return@withLock
             // The LAN path is preferred: it works with no Internet account, adds no
             // relay hop, and keeps working if the relay is unreachable.
+            val automatic = autoReconnectEnabled()
             for (endpoint in pairing.candidateEndpoints()) {
+                // A local address can only be reached by dialing it, so there is no
+                // way to ask first; that path stays opt-in through this switch.
+                if (!automatic) break
                 if (isManuallyDisconnected()) return@withLock
                 client.connect(
                     pairing,
@@ -77,11 +83,16 @@ class SyncEngine @Inject constructor(
             // the path that crosses networks: mobile data to a PC on home Wi-Fi,
             // isolated guest networks, and NAT in both directions.
             if (!isManuallyDisconnected() && pairing.supportsRelay()) {
+                // With automatic reconnection off this phone still joins the relay,
+                // so a PC can reach it from any network, but it asks before letting
+                // that PC in rather than attaching to whichever one is waiting.
+                val approve = !autoReconnectEnabled()
                 client.connect(
                     pairing,
                     deviceName = DeviceInfo.deviceName,
                     retryingOnFailure = true,
                     useRelay = true,
+                    requireApproval = approve,
                 )
                 if (awaitConnected(RELAY_CONNECT_TIMEOUT_MS)) {
                     connectedNow = true

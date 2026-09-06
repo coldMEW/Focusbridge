@@ -2,8 +2,10 @@ use crate::pairing::device_store::PairingSession;
 use focusbridge_core::cert::GeneratedCert;
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Notify;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +38,10 @@ pub struct AppState {
     pairing: Arc<Mutex<Option<PairingSession>>>,
     phone_sender: Arc<Mutex<Option<UnboundedSender<String>>>>,
     diagnostics: Arc<Mutex<ConnectionDiagnostics>>,
+    /// Set when the user asks for a specific phone rather than waiting for the
+    /// automatic connection, and cleared once a session is established.
+    relay_requested: Arc<AtomicBool>,
+    relay_wake: Arc<Notify>,
 }
 
 impl AppState {
@@ -46,7 +52,30 @@ impl AppState {
             pairing: Arc::new(Mutex::new(None)),
             phone_sender: Arc::new(Mutex::new(None)),
             diagnostics: Arc::new(Mutex::new(ConnectionDiagnostics::default())),
+            relay_requested: Arc::new(AtomicBool::new(false)),
+            relay_wake: Arc::new(Notify::new()),
         }
+    }
+
+    /// Asks the relay client to connect now, even when automatic connection is
+    /// off. This is how "reconnect this phone" reaches a phone on another
+    /// network: neither device can dial the other, so both meet at the relay.
+    pub fn request_relay_connection(&self) {
+        self.relay_requested.store(true, Ordering::Release);
+        self.relay_wake.notify_waiters();
+    }
+
+    pub fn take_relay_request(&self) -> bool {
+        self.relay_requested.swap(false, Ordering::AcqRel)
+    }
+
+    pub fn relay_connection_requested(&self) -> bool {
+        self.relay_requested.load(Ordering::Acquire)
+    }
+
+    /// Waits until someone asks for a connection.
+    pub async fn await_relay_request(&self) {
+        self.relay_wake.notified().await;
     }
 
     pub fn set_pairing(&self, session: PairingSession) {

@@ -19,6 +19,8 @@ pub struct RelayStatus {
     pub expires_at: Option<i64>,
     /// True once a phone has completed enrollment and had its identity pinned.
     pub phone_enrolled: bool,
+    /// Whether this PC rejoins the last paired phone without being asked.
+    pub auto_connect: bool,
 }
 
 fn status(state: &AppState) -> Result<RelayStatus, String> {
@@ -36,7 +38,22 @@ fn status(state: &AppState) -> Result<RelayStatus, String> {
         pair_id: pair.as_ref().map(|pair| pair.pair_id.clone()),
         expires_at: pair.as_ref().map(|pair| pair.expires_at),
         phone_enrolled,
+        auto_connect: relay_api::auto_connect(&state.db_path).map_err(|error| error.to_string())?,
     })
+}
+
+/// Turns automatic reconnection to the last paired phone on or off.
+#[tauri::command]
+pub fn relay_set_auto_connect(
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<RelayStatus, String> {
+    relay_api::set_auto_connect(&state.db_path, enabled).map_err(|error| error.to_string())?;
+    if enabled {
+        // Do not make the user wait for the next retry tick to see it work.
+        state.request_relay_connection();
+    }
+    status(&state)
 }
 
 #[tauri::command]

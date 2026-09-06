@@ -291,8 +291,19 @@ pub fn request_device_reconnect(
     .map_err(|e| e.to_string())?;
 
     if state.send_to_phone(message) {
-        Ok(())
-    } else {
-        Err("Phone is offline. Open FocusBridge on Android, then scan the QR or paste the manual payload.".into())
+        return Ok(());
     }
+    // No live socket to ask. If cross-network sync is set up, join the relay and
+    // wait there instead: the phone cannot be dialed directly on another
+    // network, but both ends can meet at the relay.
+    if relay_api::current_pair(&state.db_path)
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        state.request_relay_connection();
+        return Err(
+            "Waiting for your phone. Open FocusBridge on it and accept the connection.".into(),
+        );
+    }
+    Err("Phone is offline. Open FocusBridge on Android, then scan the QR or paste the manual payload.".into())
 }

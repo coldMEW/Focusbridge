@@ -1246,9 +1246,10 @@ private fun RulesTab(
         }
         item {
             RuleCard(
-                "Reconnect automatically",
-                "Rejoin the last paired PC on its own. Turn this off if several " +
-                    "computers are paired and you would rather choose each time.",
+                "Let a known PC connect on its own",
+                "On, a PC you have paired before reconnects without asking. Off, " +
+                    "this phone stays reachable but notifies you first so you can " +
+                    "accept or ignore it.",
                 autoReconnect,
                 onAutoReconnectChange,
             )

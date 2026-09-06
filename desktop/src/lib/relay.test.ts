@@ -10,6 +10,7 @@ function status(overrides: Partial<RelayStatus> = {}): RelayStatus {
     pairId: "b".repeat(32),
     expiresAt: NOW + 30 * 86_400_000,
     phoneEnrolled: true,
+    autoConnect: true,
     ...overrides,
   };
 }

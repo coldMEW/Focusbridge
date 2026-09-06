@@ -11,6 +11,7 @@ export interface RelayStatus {
   pairId: string | null;
   expiresAt: number | null;
   phoneEnrolled: boolean;
+  autoConnect: boolean;
 }
 
 export type RelayTone = "off" | "waiting" | "ready" | "expired";

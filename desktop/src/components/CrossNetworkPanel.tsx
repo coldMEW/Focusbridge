@@ -75,6 +75,18 @@ export default function CrossNetworkPanel() {
     }
   }, []);
 
+  const setAutoConnect = useCallback(async (value: boolean) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      setStatus(await invoke<RelayStatus>("relay_set_auto_connect", { enabled: value }));
+    } catch (error) {
+      setMessage(relayErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   const summary = summarizeRelay(status);
   const enabled = status?.configured === true;
 
@@ -107,6 +119,26 @@ export default function CrossNetworkPanel() {
           Resend verification email
         </button>
       </div>
+
+      {enabled && (
+        <label className="mt-4 flex items-start gap-3 rounded-2xl border border-border-subtle bg-bg-primary/60 p-3">
+          <input
+            type="checkbox"
+            checked={status?.autoConnect ?? true}
+            disabled={busy}
+            onChange={(event) => void setAutoConnect(event.target.checked)}
+            className="mt-1 h-4 w-4 shrink-0 accent-emerald-500"
+          />
+          <span className="text-sm leading-5 text-text-secondary">
+            <strong className="font-semibold text-text-primary">
+              Reconnect to the last phone automatically
+            </strong>
+            <br />
+            Off, this PC waits until you pick a phone under Previous connections, or show a new QR.
+            Useful when more than one phone is paired.
+          </span>
+        </label>
+      )}
 
       {message && <p className="mt-3 text-xs leading-5 text-text-muted">{message}</p>}
 
