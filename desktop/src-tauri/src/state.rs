@@ -256,9 +256,22 @@ impl AppState {
         held.clone()
     }
 
+    /// Forgets the pairing code on screen, in memory and on disk.
+    pub fn clear_pairing_session(&self) {
+        *self.pairing.lock().expect("pairing lock poisoned") = None;
+        if let Err(error) =
+            crate::db::store::set_setting(&self.db_path, PAIRING_SESSION_SETTING, "")
+        {
+            tracing::warn!(error = %error, "could not clear the stored pairing session");
+        }
+    }
+
     fn load_pairing_session(&self) -> Option<PairingSession> {
         let stored =
             crate::db::store::get_setting(&self.db_path, PAIRING_SESSION_SETTING).ok()??;
+        if stored.trim().is_empty() {
+            return None;
+        }
         let value: serde_json::Value = serde_json::from_str(&stored).ok()?;
         let text = |key: &str| value.get(key)?.as_str().map(str::to_string);
         let session = PairingSession {
@@ -308,6 +321,18 @@ impl AppState {
     pub fn mark_manual_disconnect(&self) {
         tracing::info!("the user disconnected the phone here");
         self.paused.store(true, Ordering::Release);
+        // Retire the code that is on screen.
+        //
+        // A phone keeps the pairing key it was given, and the pairing session
+        // lives for five minutes, so for those five minutes the phone that was
+        // just disconnected still presents the key of the code on display -- and
+        // was let straight back in as though it had just scanned it. The
+        // disconnect held for about seven seconds.
+        //
+        // Retiring the session makes the next code a genuinely new one, so
+        // "presents the code on screen" once again means what it says: a phone
+        // that has scanned since the disconnect.
+        self.clear_pairing_session();
         // A pending allowance would let the phone straight back in.
         self.known_phone_allowed.store(false, Ordering::Release);
         self.relay_requested.store(false, Ordering::Release);
@@ -429,6 +454,30 @@ mod vault_lock_tests {
         // The whole point of the second factor: a message arriving before anyone
         // has typed the PIN must not be put on screen.
         assert!(!state().vault_is_unlocked());
+    }
+
+    #[test]
+    fn disconnecting_retires_the_pairing_code_on_screen() {
+        // Without this the phone that was just disconnected still holds the key
+        // of the code on display, is read as having scanned it, and reconnects
+        // within seconds. The disconnect lasted about seven seconds.
+        let state = state();
+        state.set_pairing(PairingSession {
+            device_id: "desktop".into(),
+            pairing_key: "a".repeat(64),
+            cert_fingerprint: "b".repeat(64),
+            expires_at: i64::MAX,
+        });
+        assert!(state.pairing_code_is_live());
+
+        state.mark_manual_disconnect();
+
+        assert!(state.is_paused());
+        assert!(
+            !state.pairing_code_is_live(),
+            "the disconnected phone can still present the live code"
+        );
+        assert!(state.current_pairing().is_none());
     }
 
     #[test]

@@ -229,7 +229,11 @@ where
                 // about which cable it came down.
                 let automatic =
                     crate::sync::relay_api::auto_connect(&state.db_path).unwrap_or(true);
-                let just_scanned = state
+                // True when this phone presents the key of the code currently on
+                // screen. That means "scanned since the disconnect" only because
+                // disconnecting retires the code: otherwise the phone just let go
+                // of still holds the live key and walks straight back in.
+                let holds_the_code_on_screen = state
                     .current_pairing()
                     .is_some_and(|session| session.pairing_key == expected_key)
                     && state.pairing_code_is_live();
@@ -241,16 +245,16 @@ where
                     peer = %peer,
                     paused,
                     automatic,
-                    just_scanned,
+                    holds_the_code_on_screen,
                     "deciding whether this phone may attach"
                 );
                 // Scanning the code that is on screen is the user asking for this
                 // phone, so it ends the disconnect. Nothing else does.
-                if just_scanned && paused {
+                if holds_the_code_on_screen && paused {
                     info!("a phone scanned the code on screen; the disconnect is over");
                     state.resume();
                 }
-                if !may_attach(paused, automatic, just_scanned, || {
+                if !may_attach(paused, automatic, holds_the_code_on_screen, || {
                     let granted = state.take_known_phone_allowance();
                     if granted {
                         info!("allowed: the user asked for this phone by name");
@@ -300,10 +304,12 @@ where
                     .get("deviceName")
                     .and_then(|value| value.as_str())
                     .unwrap_or("Android phone");
-                let cert_fingerprint = state
-                    .current_pairing()
-                    .map(|session| session.cert_fingerprint)
-                    .unwrap_or_default();
+                // This PC's own certificate, not the pairing session's copy of it.
+                // They are the same value, but the session is cleared when the
+                // user disconnects, and reading it from there would have written
+                // an empty fingerprint over the saved device -- quietly breaking
+                // the pinning that "reconnect a known phone" depends on.
+                let cert_fingerprint = state.cert.fingerprint_sha256_hex.clone();
                 // A loopback address is the bridge, not the phone's real address;
                 // recording it would put 127.0.0.1 in the paired-device list.
                 let endpoint = if via_relay {
@@ -634,13 +640,13 @@ fn expected_pairing_key_for_envelope(state: &AppState, envelope: &Envelope) -> O
 fn may_attach(
     paused: bool,
     automatic: bool,
-    just_scanned: bool,
+    holds_the_code_on_screen: bool,
     take_allowance: impl FnOnce() -> bool,
 ) -> bool {
     if paused {
-        return just_scanned || take_allowance();
+        return holds_the_code_on_screen || take_allowance();
     }
-    automatic || just_scanned || take_allowance()
+    automatic || holds_the_code_on_screen || take_allowance()
 }
 
 async fn send_notification_ack<S>(
