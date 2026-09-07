@@ -35,7 +35,12 @@ class SyncEngine @Inject constructor(
                 // and being asked for by name is a deliberate act at the other
                 // end, not this phone undoing the user's decision. Whether that
                 // request prompts is the switch's business, not the disconnect's.
-                if (isManuallyDisconnected()) {
+                if (client.pairingRejection.value != null) {
+                    // Nothing to attempt: the desktop does not know this pairing,
+                    // and trying again produces the same answer every fifteen
+                    // seconds for as long as the phone is switched on. The user
+                    // has been told to scan again; wait for them to do it.
+                } else if (isManuallyDisconnected()) {
                     if (!client.isAwaitingPeer()) awaitApproval()
                 } else if (client.isConnected()) {
                     flushPending()
@@ -91,7 +96,12 @@ class SyncEngine @Inject constructor(
                 return@withLock
             }
             val pairing = pairings.active() ?: return@withLock
-            val automatic = autoReconnectEnabled()
+            // Consent given by scanning counts as permission for this connection,
+            // whatever the switch says. Without it, pairing with the switch off
+            // asks the user to approve the pairing they just made -- and with no
+            // relay configured it never connects at all, because the switch also
+            // stops this phone dialing the address it was just handed.
+            val automatic = autoReconnectEnabled() || client.hasPairingConsent()
             val quiet = isManuallyDisconnected()
 
             // The local path is preferred: no account, no relay hop, and it keeps

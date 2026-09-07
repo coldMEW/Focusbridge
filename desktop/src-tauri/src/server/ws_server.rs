@@ -233,12 +233,38 @@ where
                     .current_pairing()
                     .is_some_and(|session| session.pairing_key == expected_key)
                     && state.pairing_code_is_live();
-                if !may_attach(automatic, just_scanned, || state.take_known_phone_allowance()) {
-                    warn!(peer = %peer, "refused a known phone; automatic reconnection is off");
+                // Every input to the decision, because "why did it let that phone
+                // in" is otherwise unanswerable from the outside, and this rule
+                // has been wrong more than once.
+                let paused = state.is_paused();
+                info!(
+                    peer = %peer,
+                    paused,
+                    automatic,
+                    just_scanned,
+                    "deciding whether this phone may attach"
+                );
+                if !may_attach(paused, automatic, just_scanned, || {
+                    let granted = state.take_known_phone_allowance();
+                    if granted {
+                        info!("allowed: the user asked for this phone by name");
+                    }
+                    granted
+                }) {
+                    warn!(
+                        peer = %peer,
+                        paused = state.is_paused(),
+                        "refused a phone; it was disconnected here or automatic reconnection is off"
+                    );
                     state.note_known_phone_refused();
                     send_text(
                         &mut ws,
-                        r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
+                        // "not_accepting" is a decision that can change: the user
+                        // may pick this phone under previous connections, or turn
+                        // automatic reconnection on. The phone should keep waiting
+                        // to be asked for rather than give up.
+                        r#"{"version":1,"type":"AUTH_FAILED","payload":{"reason":"not_accepting"}}"#
+                            .into(),
                     )
                     .await
                     .ok();
@@ -310,9 +336,20 @@ where
                 }
             }
             IncomingDecision::AuthFailed(reason) => {
+                // Distinguish a pairing this PC cannot recognise from a phone that
+                // simply got something wrong. A phone whose credentials this PC no
+                // longer holds can never succeed by trying again -- it has to be
+                // paired afresh -- and saying so is the difference between "scan
+                // the code again" and a phone that sits at "connecting" forever.
+                let unknown_pairing = reason.contains("missing session key")
+                    || reason.contains("unknown pairing");
                 warn!(peer = %peer, reason = %reason, "phone auth failed");
                 send_text(&mut ws,
-                    r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
+                    if unknown_pairing {
+                        r#"{"version":1,"type":"AUTH_FAILED","payload":{"reason":"unknown_pairing"}}"#.into()
+                    } else {
+                        r#"{"version":1,"type":"AUTH_FAILED","payload":{"reason":"rejected"}}"#.into()
+                    },
                 )
                 .await
                 .ok();
@@ -577,13 +614,26 @@ fn expected_pairing_key_for_envelope(state: &AppState, envelope: &Envelope) -> O
 
 /// Whether a phone that has authenticated may actually attach.
 ///
-/// Split out because it is the whole of the "reconnect to the last phone
-/// automatically" setting, and it was previously buried inside a condition that
-/// also asked which transport the phone arrived on -- so the setting worked over
-/// the relay and did nothing over the local network.
+/// This is the whole of "reconnect to the last phone automatically" and of
+/// "disconnect means disconnect", in one place, asking nothing about how the
+/// phone arrived. Both rules had been written into the relay path only, so both
+/// were silently inert over the local network -- which is the path a phone on the
+/// same Wi-Fi takes first, and therefore the one the user actually sees.
+///
+/// A paused PC is one the user has disconnected. It accepts nothing on its own,
+/// whatever the setting says; only scanning a code or asking for that phone by
+/// name brings it back, and both of those resume it in the same breath.
 ///
 /// The allowance is taken only when it is needed, because taking it consumes it.
-fn may_attach(automatic: bool, just_scanned: bool, take_allowance: impl FnOnce() -> bool) -> bool {
+fn may_attach(
+    paused: bool,
+    automatic: bool,
+    just_scanned: bool,
+    take_allowance: impl FnOnce() -> bool,
+) -> bool {
+    if paused {
+        return just_scanned || take_allowance();
+    }
     automatic || just_scanned || take_allowance()
 }
 
@@ -623,7 +673,20 @@ mod attach_tests {
 
     #[test]
     fn a_phone_that_just_scanned_the_code_always_attaches() {
-        assert!(may_attach(false, true, || false));
+        assert!(may_attach(false, false, true, || false));
+        // Even from a PC the user had disconnected: scanning is asking for it.
+        assert!(may_attach(true, false, true, || false));
+    }
+
+    #[test]
+    fn a_disconnected_pc_accepts_nothing_by_itself() {
+        // Disconnect means disconnect. This held over the relay and not over the
+        // local network, so with automatic reconnection on, a phone reattached
+        // over Wi-Fi seconds after the user pressed Disconnect.
+        assert!(!may_attach(true, true, false, || false));
+        assert!(!may_attach(true, false, false, || false));
+        // Unless the user asked for that phone by name.
+        assert!(may_attach(true, false, false, || true));
     }
 
     #[test]
@@ -631,17 +694,17 @@ mod attach_tests {
         // The bug the user hit twice: this held over the relay and not over the
         // local network, so the desktop reattached to the last phone on launch
         // with the setting plainly turned off.
-        assert!(!may_attach(false, false, || false));
+        assert!(!may_attach(false, false, false, || false));
     }
 
     #[test]
     fn a_saved_phone_attaches_when_the_user_asked_for_it() {
-        assert!(may_attach(false, false, || true));
+        assert!(may_attach(false, false, false, || true));
     }
 
     #[test]
     fn automatic_reconnection_lets_a_saved_phone_straight_in() {
-        assert!(may_attach(true, false, || false));
+        assert!(may_attach(false, true, false, || false));
     }
 
     #[test]
@@ -649,12 +712,12 @@ mod attach_tests {
         // It is a single-use permission; consuming it on a connection that was
         // already allowed would silently refuse the next one.
         let taken = Cell::new(false);
-        assert!(may_attach(true, false, || {
+        assert!(may_attach(false, true, false, || {
             taken.set(true);
             true
         }));
         assert!(!taken.get());
-        assert!(may_attach(false, true, || {
+        assert!(may_attach(false, false, true, || {
             taken.set(true);
             true
         }));

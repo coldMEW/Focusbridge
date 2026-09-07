@@ -139,12 +139,12 @@ pub fn generate_pairing_qr(
         .as_ref()
         .map(|session| session.pairing_key.clone())
         .unwrap_or_else(random_hex_256);
-    // A brand new session on the pairing screen means the user asked to pair a
-    // phone. Re-rendering reuses the existing session and must not re-arm.
-    if for_pairing && existing.is_none() {
-        state.arm_enrollment();
-        // Asking for a fresh code is asking to pair, which resumes this pairing.
+    let effects = pairing_request_effects(for_pairing, existing.is_some());
+    if effects.resume {
         state.resume();
+    }
+    if effects.arm_enrollment {
+        state.arm_enrollment();
     }
     let endpoint_candidates = local_ipv4_candidates();
     let endpoint = endpoint_candidates
@@ -199,6 +199,32 @@ pub fn generate_pairing_qr(
         "pairing code generated"
     );
     Ok(qr)
+}
+
+/// What deliberately asking for a pairing code should do to this PC's state.
+///
+/// Kept apart from the command because getting it wrong is invisible until a
+/// phone cannot connect. Resuming used to be tied to whether a *new* session was
+/// created, so after a disconnect -- where the previous code is usually still
+/// valid for a few more minutes -- scanning the code resumed nothing. The PC
+/// stayed paused, never joined the relay, and a phone on mobile data sat at
+/// "connecting" with nowhere to reach. Asking to pair is asking to pair; a code
+/// that is still valid from a minute ago does not make it less of a request.
+#[derive(Debug, PartialEq, Eq)]
+struct PairingRequestEffects {
+    resume: bool,
+    arm_enrollment: bool,
+}
+
+fn pairing_request_effects(for_pairing: bool, has_live_session: bool) -> PairingRequestEffects {
+    PairingRequestEffects {
+        // Rendering the panel is not a request; pressing for a code is. That
+        // distinction is what keeps the reconnection setting meaningful.
+        resume: for_pairing,
+        // Only a brand new session means a phone that this PC may not know yet.
+        // Re-rendering an existing code must not re-open enrollment.
+        arm_enrollment: for_pairing && !has_live_session,
+    }
 }
 
 /// Builds the cross-network half of the QR, or `(None, None)` when the relay is
@@ -342,4 +368,42 @@ pub fn request_device_reconnect(
         return Ok("Waiting for your phone to accept. It can be on any network.".into());
     }
     Err("Phone is offline. Open FocusBridge on Android, then scan the QR or paste the manual payload.".into())
+}
+
+#[cfg(test)]
+mod pairing_request_tests {
+    use super::{pairing_request_effects, PairingRequestEffects};
+
+    #[test]
+    fn asking_for_a_code_resumes_even_when_the_last_one_is_still_valid() {
+        // The bug: disconnect, then scan again. The previous code is usually
+        // still within its five minutes, so this PC stayed paused and a phone on
+        // mobile data had no way to reach it.
+        assert_eq!(
+            pairing_request_effects(true, true),
+            PairingRequestEffects { resume: true, arm_enrollment: false }
+        );
+    }
+
+    #[test]
+    fn a_fresh_code_also_opens_enrollment_for_a_phone_this_pc_may_not_know() {
+        assert_eq!(
+            pairing_request_effects(true, false),
+            PairingRequestEffects { resume: true, arm_enrollment: true }
+        );
+    }
+
+    #[test]
+    fn merely_rendering_the_panel_changes_nothing() {
+        // The panel appears by itself whenever nothing is connected. Treating
+        // that as a request would undo a disconnect the user just made.
+        assert_eq!(
+            pairing_request_effects(false, false),
+            PairingRequestEffects { resume: false, arm_enrollment: false }
+        );
+        assert_eq!(
+            pairing_request_effects(false, true),
+            PairingRequestEffects { resume: false, arm_enrollment: false }
+        );
+    }
 }

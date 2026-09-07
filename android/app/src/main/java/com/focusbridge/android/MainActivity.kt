@@ -155,6 +155,7 @@ class MainActivity : ComponentActivity() {
                     pairingConsumed = { pendingPairing = null; intent?.data = null },
                     connectionState = webSocketClient.state.collectAsState().value,
                     reconnectRequest = webSocketClient.reconnectRequest.collectAsState().value,
+                    pairingRejection = webSocketClient.pairingRejection.collectAsState().value,
                     openNotificationAccess = {
                         startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     },
@@ -228,6 +229,8 @@ private fun FocusBridgeScreen(
     pairingConsumed: () -> Unit,
     connectionState: ConnectionState,
     reconnectRequest: com.focusbridge.android.sync.DesktopReconnectRequest?,
+    /** Set when the desktop does not recognise this pairing at all. */
+    pairingRejection: String?,
     openNotificationAccess: () -> Unit,
     openBatterySettings: () -> Unit,
     startSync: () -> Unit,
@@ -302,6 +305,20 @@ private fun FocusBridgeScreen(
             Box(contentAlignment = Alignment.Center) { Text("Loading app lock...") }
         }
         return
+    }
+
+    // A pairing the desktop cannot recognise is the one failure retrying never
+    // fixes, and it used to present as a spinner that never resolved. Say what
+    // happened and what to do about it.
+    if (pairingRejection != null && (!appLockEnabled || appUnlocked)) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Pair again") },
+            text = { Text(pairingRejection) },
+            confirmButton = {
+                TextButton(onClick = startSync) { Text("Scan a code") }
+            },
+        )
     }
 
     if (reconnectRequest != null && (!appLockEnabled || appUnlocked)) {

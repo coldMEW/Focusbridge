@@ -100,6 +100,28 @@ class WebSocketClient @Inject constructor(
     private var heartbeatJob: Job? = null
     private var sessionJob = SupervisorJob()
     @Volatile private var manuallyDisconnected = false
+    /**
+     * Set when the user pairs this phone by scanning a code, and cleared once a
+     * session is actually established.
+     *
+     * Scanning is consent. Without this, a phone with "let a known PC connect on
+     * its own" switched off would ask for permission immediately after the user
+     * had just granted it at the desktop -- and with no relay configured it would
+     * not connect at all, because the switch also stops it dialing the address it
+     * had just been given. It survives failed attempts on purpose: consent was
+     * given for the connection, not for one particular try at it.
+     */
+    @Volatile private var pairedByUser = false
+    /**
+     * Set when the desktop says it does not recognise this pairing at all.
+     *
+     * Retrying cannot fix that: the credentials this phone holds are for a code
+     * that has since been replaced, so every attempt fails identically, forever,
+     * on mobile data. The phone stops dialing and says what to do instead, which
+     * is the difference between an explanation and a spinner that never resolves.
+     */
+    private val _pairingRejection = MutableStateFlow<String?>(null)
+    val pairingRejection: StateFlow<String?> = _pairingRejection
     private val preferenceMutex = Mutex()
     private val rulesUpdateMutex = Mutex()
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
@@ -112,6 +134,20 @@ class WebSocketClient @Inject constructor(
     fun isConnected(): Boolean = _state.value == ConnectionState.CONNECTED && socket != null
 
     fun isManuallyDisconnected(): Boolean = manuallyDisconnected
+
+    /** Called when the user pairs this phone by scanning a desktop code. */
+    fun notePairedByUser() {
+        pairedByUser = true
+        _pairingRejection.value = null
+    }
+
+    /** Clears a terminal rejection so the phone will try again. */
+    fun clearPairingRejection() {
+        _pairingRejection.value = null
+    }
+
+    /** True until the connection the user asked for has been established. */
+    fun hasPairingConsent(): Boolean = pairedByUser
 
     /**
      * True when a transport is established, even if the desktop has not yet been
@@ -379,6 +415,8 @@ class WebSocketClient @Inject constructor(
             MessageType.AUTH_OK -> {
                 if (!relayTransport) secureReady = secureTransport
                 lastPongAt = System.currentTimeMillis()
+                // The consent given by scanning has been used now.
+                pairedByUser = false
                 // An authenticated session ends the disconnect, whether the user
                 // accepted a request or the switch let this through silently.
                 // Holding both states at once is not a subtlety: the phone shows
@@ -389,10 +427,21 @@ class WebSocketClient @Inject constructor(
                 startHeartbeat(webSocket, pairing.pairingKey, serial)
                 sendAppInventory(webSocket, pairing.pairingKey, serial)
             }
-            MessageType.AUTH_FAILED -> finishConnection(
-                serial,
-                if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
-            )
+            MessageType.AUTH_FAILED -> {
+                val reason = (envelope.payload as? JsonObject)
+                    ?.get("reason")?.toString()?.trim('"')
+                if (reason == "unknown_pairing") {
+                    // Terminal: only pairing again can resolve it.
+                    _pairingRejection.value =
+                        "This PC no longer recognises this pairing. Scan the code on the PC again."
+                    finishConnection(serial, ConnectionState.DISCONNECTED)
+                } else {
+                    finishConnection(
+                        serial,
+                        if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+                    )
+                }
+            }
             MessageType.PONG -> {
                 lastPongAt = System.currentTimeMillis()
             }
@@ -502,6 +551,7 @@ class WebSocketClient @Inject constructor(
 
     @Synchronized
     fun acceptReconnectRequest() {
+        _pairingRejection.value = null
         setManualDisconnect(false)
         _reconnectRequest.value = null
         // A desktop waiting at the relay can be answered immediately; there is no

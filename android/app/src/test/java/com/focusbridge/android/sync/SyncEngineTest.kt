@@ -41,6 +41,8 @@ class SyncEngineTest {
         coEvery { pairings.active() } returns pairing
         every { client.state } returns state
         every { client.isConnected() } answers { state.value == ConnectionState.CONNECTED }
+        every { client.hasPairingConsent() } returns false
+        every { client.pairingRejection } returns MutableStateFlow(null)
         every { client.connect(any(), any(), any(), any()) } answers {
             attempts += thirdArg<String>()
             state.value = ConnectionState.CONNECTING
@@ -263,6 +265,30 @@ class SyncEngineTest {
         engine.send(sampleNotification)
 
         verify(exactly = 0) { client.send(any()) }
+    }
+
+    @Test fun scanningACodeConnectsWithoutAskingEvenWithTheSwitchOff() = runBlocking {
+        // Scanning is the permission. Asking again straight afterwards is asking
+        // the user to approve what they just did, and on a pairing with no relay
+        // the switch would otherwise stop this phone dialing at all.
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "false"
+        coEvery { config.get("manual_disconnect") } returns "false"
+        every { client.isManuallyDisconnected() } returns false
+        every { client.hasPairingConsent() } returns true
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        engine.connectActivePairing()
+
+        // The local address is tried, which only happens when this phone may
+        // connect without being asked...
+        verify(atLeast = 1) {
+            client.connect(relayPairing, any(), any(), any(), useRelay = false, requireApproval = false)
+        }
+        // ...and the relay attempt does not ask either.
+        verify(exactly = 0) {
+            client.connect(any(), any(), any(), any(), any(), requireApproval = true)
+        }
     }
 
     @Test fun aManualDisconnectIsNotLiftedByTheReconnectionSwitch() = runBlocking {

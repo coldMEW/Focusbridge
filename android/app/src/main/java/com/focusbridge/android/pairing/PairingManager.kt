@@ -144,6 +144,9 @@ class PairingManager @Inject constructor(
             enrollmentPsk = noise?.psk.orEmpty(),
         )
         repository.save(pairing)
+        // Scanning the code is the permission; the next connection must not ask
+        // for it again.
+        client.notePairedByUser()
         client.acceptReconnectRequest()
         return pairing
     }
