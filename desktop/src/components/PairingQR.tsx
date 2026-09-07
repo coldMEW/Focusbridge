@@ -15,22 +15,6 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
   // Full size is the reliable way to scan: the side panel is narrow, and a phone
   // held at arm's length needs the modules to be several pixels across.
   const [enlarged, setEnlarged] = useState(false);
-  /**
-   * Whether a phone that scans the code could actually reach this PC.
-   *
-   * Across networks that means being present at the relay, and a PC the user has
-   * disconnected is not. Showing the code anyway is what left a phone sitting at
-   * "connecting" for minutes with nothing on the other end -- sometimes working,
-   * sometimes not, depending on whether the code on screen happened to have been
-   * asked for or merely drawn.
-   */
-  const [reachable, setReachable] = useState<boolean | null>(null);
-
-  const refreshReachable = () => {
-    invoke<{ configured: boolean; paused: boolean }>("relay_status")
-      .then((status) => setReachable(!status.configured || !status.paused))
-      .catch(() => setReachable(null));
-  };
 
   // `deliberate` means the user pressed the button, and only that makes this PC
   // reachable over the relay. The panel also renders on load, on window focus
@@ -51,15 +35,12 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
       .finally(() => {
         if (alive) setRefreshing(false);
       });
-    // Asking for a code is what makes this PC reachable again.
-    if (deliberate) setReachable(true);
     return () => {
       alive = false;
     };
   };
 
   useEffect(() => {
-    refreshReachable();
     const dispose = refreshQr();
     const refreshIfStale = () => {
       setQr((current) => {
@@ -102,22 +83,7 @@ export default function PairingQR({ compact = false }: { compact?: boolean }) {
       </div>
 
       {error && <p className="mt-4 text-sm text-[#9b4b3d]">Pairing error: {error}</p>}
-      {reachable === false ? (
-        <div className="mt-5 grid gap-4">
-          <div className="rounded-[28px] border border-border-subtle bg-bg-secondary/60 p-6 text-sm leading-6 text-text-secondary">
-            This PC is disconnected, so a code shown now could not be scanned from
-            another network: your phone would wait and never arrive. Ask for a code
-            and this PC becomes reachable again.
-          </div>
-          <button
-            onClick={() => refreshQr(true)}
-            disabled={refreshing}
-            className="rounded-full bg-text-primary px-4 py-2 text-sm font-semibold text-bg-primary transition hover:bg-accent-study disabled:cursor-wait disabled:opacity-60"
-          >
-            {refreshing ? "Preparing..." : "Show a pairing code"}
-          </button>
-        </div>
-      ) : qr ? (
+      {qr ? (
         <div className="mt-5 grid min-w-0 gap-4">
           <div className="mx-auto w-fit max-w-full rounded-[28px] border border-border-subtle bg-white p-3 shadow-soft">
             {/* Square at every width: fixing both dimensions and then capping the

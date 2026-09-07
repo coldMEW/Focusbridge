@@ -140,6 +140,13 @@ pub fn generate_pairing_qr(
         .map(|session| session.pairing_key.clone())
         .unwrap_or_else(random_hex_256);
     let effects = pairing_request_effects(for_pairing, existing.is_some());
+    tracing::info!(
+        for_pairing,
+        reusing_session = existing.is_some(),
+        resume = effects.resume,
+        was_paused = state.is_paused(),
+        "pairing code requested"
+    );
     if effects.resume {
         state.resume();
     }
@@ -160,11 +167,12 @@ pub fn generate_pairing_qr(
     // the phone could not authenticate to.
     let (relay, noise) = relay_pairing_blocks(&state);
     // A phone that scans this code may only be able to reach this PC through the
-    // relay, and it cannot dial the PC directly, so showing the code on the
-    // pairing screen is also a request to be present at the relay. That is a
-    // deliberate act and overrides the reconnection preference; the inbox
-    // preview is not, and must not.
-    if relay.is_some() && !state.is_paused() {
+    // relay, so a code on screen means waiting where such a phone can find it.
+    // That is true even after a disconnect: being findable is not the same as
+    // accepting, and what may actually attach is decided at authentication. Any
+    // code shown therefore works, which is the only behaviour that is possible
+    // to explain.
+    if relay.is_some() {
         // Wake the relay supervisor so it re-evaluates: a live code means this PC
         // must be waiting where a phone that scans it can reach it. Who is then
         // let in is decided at authentication, not here.
@@ -218,9 +226,15 @@ struct PairingRequestEffects {
 
 fn pairing_request_effects(for_pairing: bool, has_live_session: bool) -> PairingRequestEffects {
     PairingRequestEffects {
-        // Rendering the panel is not a request; pressing for a code is. That
-        // distinction is what keeps the reconnection setting meaningful.
-        resume: for_pairing,
+        // Showing a code never lifts a disconnect. The pairing panel appears by
+        // itself whenever nothing is connected, so resuming here reconnected the
+        // phone seconds after the user had let it go -- and resuming only on a
+        // deliberate press was no better, because the code on screen then worked
+        // or did not depending on how it came to be drawn.
+        //
+        // A scan is what lifts it, and that is decided when the phone arrives
+        // holding this code: see `may_attach`.
+        resume: false,
         // Only a brand new session means a phone that this PC may not know yet.
         // Re-rendering an existing code must not re-open enrollment.
         arm_enrollment: for_pairing && !has_live_session,
@@ -375,34 +389,35 @@ mod pairing_request_tests {
     use super::{pairing_request_effects, PairingRequestEffects};
 
     #[test]
-    fn asking_for_a_code_resumes_even_when_the_last_one_is_still_valid() {
-        // The bug: disconnect, then scan again. The previous code is usually
-        // still within its five minutes, so this PC stayed paused and a phone on
-        // mobile data had no way to reach it.
-        assert_eq!(
-            pairing_request_effects(true, true),
-            PairingRequestEffects { resume: true, arm_enrollment: false }
-        );
+    fn showing_a_code_never_lifts_a_disconnect() {
+        // The pairing panel appears by itself whenever nothing is connected, so
+        // anything it does on its own undoes the disconnect the user just made.
+        // Only a phone arriving with this code lifts it, which is decided when
+        // that phone authenticates.
+        for for_pairing in [true, false] {
+            for has_live_session in [true, false] {
+                assert!(
+                    !pairing_request_effects(for_pairing, has_live_session).resume,
+                    "showing a code resumed with for_pairing={for_pairing}"
+                );
+            }
+        }
     }
 
     #[test]
-    fn a_fresh_code_also_opens_enrollment_for_a_phone_this_pc_may_not_know() {
+    fn a_fresh_code_opens_enrollment_for_a_phone_this_pc_may_not_know() {
         assert_eq!(
             pairing_request_effects(true, false),
-            PairingRequestEffects { resume: true, arm_enrollment: true }
+            PairingRequestEffects { resume: false, arm_enrollment: true }
         );
-    }
-
-    #[test]
-    fn merely_rendering_the_panel_changes_nothing() {
-        // The panel appears by itself whenever nothing is connected. Treating
-        // that as a request would undo a disconnect the user just made.
+        // Re-drawing a code that already exists must not re-open enrollment,
+        // which would let a different handset replace the pinned one.
         assert_eq!(
-            pairing_request_effects(false, false),
+            pairing_request_effects(true, true),
             PairingRequestEffects { resume: false, arm_enrollment: false }
         );
         assert_eq!(
-            pairing_request_effects(false, true),
+            pairing_request_effects(false, false),
             PairingRequestEffects { resume: false, arm_enrollment: false }
         );
     }

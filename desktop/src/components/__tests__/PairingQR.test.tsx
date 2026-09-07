@@ -26,21 +26,7 @@ describe("the pairing code", () => {
     invoke.mockReset();
   });
 
-  it("is not shown at all when this PC would not answer a scan of it", async () => {
-    // A disconnected PC is not present at the relay, so a phone on another
-    // network scans a valid code and then waits for a machine that is not
-    // listening. That is what made pairing work sometimes and not others.
-    respond({ configured: true, paused: true });
-
-    render(<PairingQR />);
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /show a pairing code/i })).toBeTruthy();
-    });
-    expect(screen.queryByAltText("Pairing QR")).toBeNull();
-  });
-
-  it("is shown once this PC is reachable", async () => {
+  it("is shown whenever the pairing screen is open", async () => {
     respond({ configured: true, paused: false });
 
     render(<PairingQR />);
@@ -50,10 +36,22 @@ describe("the pairing code", () => {
     });
   });
 
-  it("is shown when there is no relay to be absent from", async () => {
-    // A LAN-only pairing needs no relay presence: the listener is always up, so
-    // a code always works and hiding it would be wrong.
-    respond({ configured: false, paused: true });
+  it("is still shown after a disconnect, because a shown code always works", async () => {
+    // The code is not hidden and no extra step is asked for. A disconnected PC
+    // still waits where a phone that scans this code can find it; what it will
+    // not do is accept a phone that has not scanned it.
+    respond({ configured: true, paused: true });
+
+    render(<PairingQR />);
+
+    await waitFor(() => {
+      expect(screen.getByAltText("Pairing QR")).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: /show a pairing code/i })).toBeNull();
+  });
+
+  it("is shown with no relay configured", async () => {
+    respond({ configured: false, paused: false });
 
     render(<PairingQR />);
 

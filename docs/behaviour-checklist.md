@@ -66,7 +66,8 @@ because the PC asked deliberately; what R2 forbids is the PC reaching out unaske
 | Behaviour | Verified by |
 |---|---|
 | Asking for a pairing code resumes this PC even when the previous code is still valid | `pairing_cmd::pairing_request_tests`. Resuming was tied to minting a *new* session, so scanning after a disconnect resumed nothing and a phone on mobile data sat at "connecting" |
-| A code is never shown that a phone could not reach | `PairingQR` asks `relay_status.paused` and offers "Show a pairing code" instead. A displayed code is a working code |
+| The pairing code is **always** shown, with no extra step, and a shown code always works | `PairingQR.test.tsx`. A disconnected PC still waits where a phone scanning that code can find it; being findable is not the same as accepting |
+| Showing a code never lifts a disconnect; a phone arriving with that code does | `pairing_cmd::pairing_request_tests::showing_a_code_never_lifts_a_disconnect`, and `ws_server` resumes on `just_scanned`. The panel appears by itself whenever nothing is connected, so anything it does on its own undoes the user's disconnect |
 | Scanning is consent: the phone does not ask permission for a pairing just made | `SyncEngineTest.scanningACodeConnectsWithoutAskingEvenWithTheSwitchOff` |
 | A pairing the desktop cannot recognise stops retrying and says to scan again | AUTH_FAILED carries `unknown_pairing`; the phone shows it and stops dialing, instead of retrying every 15s forever on mobile data |
 | On mobile data the phone does not wait on LAN addresses that cannot answer | `SyncEngineTest.onMobileDataTheLocalAddressesAreNotWaitedOn`; this was 4s per saved address before the relay was even tried |

@@ -56,22 +56,14 @@ fn idle_once(state: &AppState, reason: &str) {
 pub async fn start(state: AppState, local_port: u16) {
     let mut backoff = MIN_BACKOFF;
     loop {
-        // Disconnect means disconnect. Paused outranks everything below it,
-        // including the preference and a code being on screen, so nothing here
-        // reaches for a phone the user just let go of.
-        if state.is_paused() {
-            idle_once(
-                &state,
-                "the phone was disconnected here; pick it under previous connections \
-                 or ask for a new pairing code to reconnect",
-            );
-            state.await_relay_request().await;
-            continue;
-        }
-        // Being at the relay is not the same as accepting a phone. This PC waits
-        // there whenever a pairing code is on screen, because a phone that scans
-        // it has no other way to reach this machine; whether the phone is then
-        // let in is decided when it authenticates, by which code it presents.
+        // Being at the relay is not the same as accepting a phone, and that holds
+        // after a disconnect too. Refusing to be present at all was the
+        // tidier-looking way to honour a disconnect, and it meant a phone on
+        // mobile data could scan the code on screen and still find nobody there.
+        // The disconnect is kept where it belongs: a paused PC turns away
+        // everything except a phone holding the code it is currently showing.
+        // This PC waits there whenever a pairing code is on screen, because a
+        // phone that scans it has no other way to reach this machine.
         let automatic =
             relay_api::auto_connect(&state.db_path).unwrap_or(true) || state.pairing_code_is_live();
         if !automatic && !state.relay_connection_requested() {

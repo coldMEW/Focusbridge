@@ -121,7 +121,9 @@ impl AppState {
     /// Cleared only by an explicit request: picking a saved phone, or asking for
     /// a fresh pairing code.
     pub fn resume(&self) {
-        self.paused.store(false, Ordering::Release);
+        if self.paused.swap(false, Ordering::AcqRel) {
+            tracing::info!("the pause was lifted");
+        }
     }
 
     /// Lets a phone this PC already knows reattach once.
@@ -304,6 +306,7 @@ impl AppState {
     }
 
     pub fn mark_manual_disconnect(&self) {
+        tracing::info!("the user disconnected the phone here");
         self.paused.store(true, Ordering::Release);
         // A pending allowance would let the phone straight back in.
         self.known_phone_allowed.store(false, Ordering::Release);

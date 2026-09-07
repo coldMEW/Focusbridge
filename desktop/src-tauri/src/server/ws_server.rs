@@ -244,6 +244,12 @@ where
                     just_scanned,
                     "deciding whether this phone may attach"
                 );
+                // Scanning the code that is on screen is the user asking for this
+                // phone, so it ends the disconnect. Nothing else does.
+                if just_scanned && paused {
+                    info!("a phone scanned the code on screen; the disconnect is over");
+                    state.resume();
+                }
                 if !may_attach(paused, automatic, just_scanned, || {
                     let granted = state.take_known_phone_allowance();
                     if granted {
