@@ -27,10 +27,7 @@ param(
     # survives into the shipped binary. A literal that lives in a #[cfg(test)]
     # block is not in the release build, and checking for one fails on a perfectly
     # good install.
-    [string]$ExpectContains,
-    # The built executable to compare against. Comparing hashes is exact and needs
-    # no guess about which strings survive, so it is the default check.
-    [string]$BuiltExe
+    [string]$ExpectContains
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,29 +39,43 @@ $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $transcript = Join-Path $env:TEMP 'focusbridge-install.log'
-    $self = $MyInvocation.MyCommand.Path
-    $arguments = @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command',
-        "Start-Transcript -Path '$transcript' -Force | Out-Null; " +
-        "& '$self' @PSBoundParameters; Stop-Transcript | Out-Null")
-    $bound = @()
-    foreach ($entry in $PSBoundParameters.GetEnumerator()) {
-        $bound += "-$($entry.Key)"
-        $bound += "'$($entry.Value)'"
+    # The arguments are written to a script rather than spliced into a -Command
+    # string. Building that string by hand put quotes inside quotes, and a path
+    # given with -Msi came out the other side with the quotes still attached --
+    # which surfaced as "Illegal characters in path" and looked like a bad path
+    # rather than a bad relaunch. Passing the values as a hashtable in a file has
+    # nothing to escape.
+    $payload = @{
+        Self       = $MyInvocation.MyCommand.Path
+        Parameters = @{}
     }
-    $arguments[-1] = $arguments[-1].Replace('@PSBoundParameters', ($bound -join ' '))
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+        $payload.Parameters[$entry.Key] = $entry.Value
+    }
+    $payloadPath = Join-Path $env:TEMP 'focusbridge-install-args.xml'
+    $payload | Export-Clixml -Path $payloadPath
+    $runner = Join-Path $env:TEMP 'focusbridge-install-elevated.ps1'
+    @"
+Start-Transcript -Path '$transcript' -Force | Out-Null
+try {
+    `$payload = Import-Clixml -Path '$payloadPath'
+    # Splatting only works from a plain variable, not a property.
+    `$splat = `$payload.Parameters
+    & `$payload.Self @splat
+} finally {
+    Stop-Transcript | Out-Null
+}
+"@ | Set-Content -Path $runner -Encoding UTF8
+
     Write-Host "Elevating; accept the prompt. Output goes to $transcript"
-    $elevated = Start-Process powershell -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+    $elevated = Start-Process powershell `
+        -ArgumentList @('-ExecutionPolicy', 'Bypass', '-NoProfile', '-File', $runner) `
+        -Verb RunAs -Wait -PassThru
     if (Test-Path $transcript) { Get-Content $transcript }
+    Remove-Item $payloadPath, $runner -Force -ErrorAction SilentlyContinue
     exit $elevated.ExitCode
 }
 
-# Resolved here rather than in the param block, because Windows PowerShell
-# leaves $PSScriptRoot empty there when the script is invoked with -File.
-if (-not $BuiltExe) {
-    $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $BuiltExe = Join-Path $scriptRoot '..	arget
-eleaseocusbridge-desktop.exe'
-}
 if (-not $Msi) {
     $root = Split-Path -Parent $MyInvocation.MyCommand.Path
     $Msi = Join-Path $root '..\target\release\bundle\msi\FocusBridge_1.0.0_x64_en-US.msi'
@@ -101,17 +112,37 @@ $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$Msi`"", '/qn', '/norestar
 if ($p.ExitCode -ne 0) { throw "Install failed with exit code $($p.ExitCode)." }
 if (-not (Test-Path $Installed)) { throw "Install reported success but $Installed is missing." }
 
-# The exact check: the file that was installed must be the file that was built.
-if (Test-Path $BuiltExe) {
-    $built = (Get-FileHash $BuiltExe -Algorithm SHA256).Hash
-    $live = (Get-FileHash $Installed -Algorithm SHA256).Hash
-    if ($built -ne $live) {
-        throw "The installed binary is not the one just built. Built $built, installed $live."
+# The exact check: what is installed must be what this installer contains.
+#
+# Comparing against the build directory was wrong whenever the installer came from
+# somewhere else, and Rust builds are not reproducible byte for byte, so a
+# perfectly good install failed the check and looked like a broken install.
+# Extracting the payload from the very .msi being installed does not care where
+# that file came from.
+$extract = Join-Path $env:TEMP ('focusbridge-msi-' + [Guid]::NewGuid().ToString('N'))
+$payloadExe = $null
+try {
+    $null = New-Item -ItemType Directory -Path $extract -Force
+    $admin = Start-Process msiexec -ArgumentList @('/a', $Msi, '/qn', "TARGETDIR=$extract") -Wait -PassThru
+    if ($admin.ExitCode -eq 0) {
+        $payloadExe = Get-ChildItem $extract -Recurse -Filter 'focusbridge-desktop.exe' -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
     }
-    Write-Host "Verified the installed binary matches the build ($($built.Substring(0,16))...)."
-} else {
-    Write-Warning "No built executable at $BuiltExe to compare against; skipping the hash check."
+} catch {
+    $payloadExe = $null
 }
+
+if ($payloadExe) {
+    $expected = (Get-FileHash $payloadExe -Algorithm SHA256).Hash
+    $live = (Get-FileHash $Installed -Algorithm SHA256).Hash
+    if ($expected -ne $live) {
+        throw "The installed binary is not the one in $Msi. Expected $expected, found $live."
+    }
+    Write-Host "Verified the installed binary matches the installer ($($expected.Substring(0,16))...)."
+} else {
+    Write-Warning "Could not read the installer payload to compare against; skipping the hash check."
+}
+Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($ExpectContains) {
     $bytes = [System.IO.File]::ReadAllBytes($Installed)

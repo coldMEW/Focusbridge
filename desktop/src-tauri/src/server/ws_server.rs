@@ -477,7 +477,12 @@ fn apply_work_item(
             if !current() {
                 return Ok(None);
             }
-            app.emit("focusbridge://notification", &row)?;
+            // Only pushed into the interface once it is entitled to show it. The
+            // inbox loads itself from the database when it mounts, which happens
+            // after unlocking, so nothing is missed by staying quiet here.
+            if state.vault_is_unlocked() {
+                app.emit("focusbridge://notification", &row)?;
+            }
             if !existed && current() {
                 // Stored either way, so nothing is lost and the inbox is complete
                 // the moment the vault opens; but not displayed, because a desktop

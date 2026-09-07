@@ -78,6 +78,8 @@ because the PC asked deliberately; what R2 forbids is the PC reaching out unaske
 | A TLS provider is chosen before any connection is made | `tls_provider_tests::a_tls_provider_is_chosen_before_any_connection_is_made`; rustls 0.23 turns a missing choice into a runtime panic that no other test catches |
 | The webview runs under a Content Security Policy, and holds no permission it does not use | `tauri.conf.json` security.csp; capabilities list |
 | Release builds are signed with a private key kept outside the repository | `:app:signingReport` shows the FocusBridge key for the release variant |
-| Dependency advisories are checked | `pnpm audit --prod` clean; `cargo audit` — remaining items are Windows-toast XML parsing of our own content and crates not compiled for this target |
+| Dependency advisories are checked | `pnpm audit --prod` clean; `cargo audit` — every remaining crate (`quick-xml`, `quinn-proto`, the GTK bindings) is absent from `cargo tree --target x86_64-pc-windows-msvc`, so none of it is in the shipped binary |
+| The stored inbox is not readable while the vault is locked, by any route | `notification_cmd::tests::the_inbox_is_refused_while_locked_and_served_once_open`; the notification event is not emitted to the interface either |
+| An install is verified against the payload of the installer that was run | `install-desktop.ps1` extracts the .msi and compares hashes |
 | The relay rejects unauthenticated sockets before the upgrade, and bad roles and query strings outright | live probes: 401 / 404 / 400 |
 | No message content is shown before the local vault is unlocked; a launch starts locked, and the idle timeout and signing out close it again | `state::vault_lock_tests`; the desktop notification is gated on `vault_is_unlocked`. The lock was interface-only, so messages appeared in full on screen while the PIN was still being asked for |

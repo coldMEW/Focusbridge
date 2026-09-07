@@ -70,6 +70,11 @@ android {
                 storePassword = releaseSigning.getProperty("storePassword")
                 keyAlias = releaseSigning.getProperty("keyAlias")
                 keyPassword = releaseSigning.getProperty("keyPassword")
+                // v2 verifies the whole archive; v3 adds the ability to rotate
+                // this key later, which matters because a signing key that can
+                // never change is a signing key that can never recover.
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
