@@ -479,7 +479,14 @@ fn apply_work_item(
             }
             app.emit("focusbridge://notification", &row)?;
             if !existed && current() {
-                desktop_notifications::show_phone_notification(app, &row);
+                // Stored either way, so nothing is lost and the inbox is complete
+                // the moment the vault opens; but not displayed, because a desktop
+                // notification puts the message on screen for anyone walking past.
+                if state.vault_is_unlocked() {
+                    desktop_notifications::show_phone_notification(app, &row);
+                } else {
+                    info!("held a notification off screen: the vault is locked");
+                }
             }
             return Ok(Some(row.id));
         }

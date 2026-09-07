@@ -76,6 +76,7 @@ pub fn run() {
             commands::auth_cmd::auth_register,
             commands::auth_cmd::auth_register_with_recovery,
             commands::auth_cmd::auth_login,
+            commands::auth_cmd::auth_lock,
             commands::auth_cmd::auth_recovery_question,
             commands::auth_cmd::auth_reset_password_with_recovery,
             commands::auth_cmd::auth_update_recovery,

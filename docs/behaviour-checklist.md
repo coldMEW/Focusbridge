@@ -80,3 +80,4 @@ because the PC asked deliberately; what R2 forbids is the PC reaching out unaske
 | Release builds are signed with a private key kept outside the repository | `:app:signingReport` shows the FocusBridge key for the release variant |
 | Dependency advisories are checked | `pnpm audit --prod` clean; `cargo audit` — remaining items are Windows-toast XML parsing of our own content and crates not compiled for this target |
 | The relay rejects unauthenticated sockets before the upgrade, and bad roles and query strings outright | live probes: 401 / 404 / 400 |
+| No message content is shown before the local vault is unlocked; a launch starts locked, and the idle timeout and signing out close it again | `state::vault_lock_tests`; the desktop notification is gated on `vault_is_unlocked`. The lock was interface-only, so messages appeared in full on screen while the PIN was still being asked for |

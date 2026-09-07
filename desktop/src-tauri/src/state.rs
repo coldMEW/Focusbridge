@@ -48,6 +48,7 @@ pub struct AppState {
     enrollment_armed: Arc<AtomicBool>,
     known_phone_allowed: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    vault_unlocked: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -64,7 +65,31 @@ impl AppState {
             enrollment_armed: Arc::new(AtomicBool::new(false)),
             known_phone_allowed: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
+            // Starts locked, every launch. Nothing from the phone may be put on
+            // screen before someone has proved they are allowed to read it.
+            vault_unlocked: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// True once the local vault has been opened in this run.
+    ///
+    /// The lock used to live entirely in the interface, which hid the dashboard
+    /// but did nothing about the desktop notifications the backend raises: a
+    /// message arriving before the PIN was typed appeared on screen in full, and
+    /// the second factor protected nothing that mattered. Anything that displays
+    /// message content has to ask this first.
+    pub fn vault_is_unlocked(&self) -> bool {
+        self.vault_unlocked.load(Ordering::Acquire)
+    }
+
+    /// Called when the PIN or password has been verified, or a new one set.
+    pub fn unlock_vault(&self) {
+        self.vault_unlocked.store(true, Ordering::Release);
+    }
+
+    /// Called when the interface locks again -- the idle timeout, or signing out.
+    pub fn lock_vault(&self) {
+        self.vault_unlocked.store(false, Ordering::Release);
     }
 
     /// True after the user disconnected the phone and before they asked for it
@@ -361,4 +386,37 @@ fn now_ms_i64() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod vault_lock_tests {
+    use super::*;
+
+    fn state() -> AppState {
+        let dir = std::env::temp_dir().join(format!("fb-vault-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Built straight from the core crate: this file is also compiled into an
+        // integration test, where the desktop module tree is not in scope.
+        let cert = focusbridge_core::cert::generate_self_signed("focusbridge-test")
+            .expect("generate a certificate for the test");
+        AppState::new(dir.join("test.db"), cert)
+    }
+
+    #[test]
+    fn a_fresh_launch_starts_locked() {
+        // The whole point of the second factor: a message arriving before anyone
+        // has typed the PIN must not be put on screen.
+        assert!(!state().vault_is_unlocked());
+    }
+
+    #[test]
+    fn the_vault_opens_on_unlock_and_closes_again_on_lock() {
+        let state = state();
+        state.unlock_vault();
+        assert!(state.vault_is_unlocked());
+        // The idle timeout and signing out both come back through here, so a
+        // desktop left alone stops showing messages again.
+        state.lock_vault();
+        assert!(!state.vault_is_unlocked());
+    }
 }

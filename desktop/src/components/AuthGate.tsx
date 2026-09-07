@@ -105,7 +105,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     events.forEach((event) => window.addEventListener(event, markActivity, { passive: true }));
     const timer = window.setInterval(() => {
       if (Date.now() - lastActivity >= lockTimeoutMinutes * 60_000) {
-        setUnlocked(false);
+        lockVault();
         setPassword("");
       }
     }, 5_000);
@@ -114,6 +114,20 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       window.clearInterval(timer);
     };
   }, [lastActivity, lockTimeoutMinutes, unlocked]);
+
+  /**
+   * Closes the vault in the interface and in the backend together.
+   *
+   * Hiding the dashboard is not the whole lock: the backend raises the desktop
+   * notifications, and it kept raising them -- with the message in them -- while
+   * this screen was asking for a PIN. Anything that locks has to say so.
+   */
+  const lockVault = () => {
+    setUnlocked(false);
+    invoke("auth_lock").catch(() => {
+      // Locking the interface still stands even if the call fails.
+    });
+  };
 
   const acceptAccountSession = (session: AccountSession) => {
     writeAccountSession(window.localStorage, session);
@@ -275,7 +289,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
               signOut={() => {
                 clearAccountSession(window.localStorage);
                 setAccountSession(null);
-                setUnlocked(false);
+                lockVault();
                 setPassword("");
                 setError(null);
                 setNotice(null);

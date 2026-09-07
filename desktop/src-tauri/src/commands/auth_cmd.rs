@@ -46,7 +46,10 @@ pub fn auth_status(state: tauri::State<'_, AppState>) -> AuthStatus {
 #[tauri::command]
 pub fn auth_register(password: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     validate_password(&password)?;
-    set_password(&state, &password)
+    set_password(&state, &password)?;
+    // Creating the vault leaves it open; the user is standing right there.
+    state.unlock_vault();
+    Ok(())
 }
 
 #[tauri::command]
@@ -59,7 +62,9 @@ pub fn auth_register_with_recovery(
     validate_password(&password)?;
     validate_recovery(&security_question, &security_answer)?;
     set_password(&state, &password)?;
-    set_recovery(&state, &security_question, &security_answer)
+    set_recovery(&state, &security_question, &security_answer)?;
+    state.unlock_vault();
+    Ok(())
 }
 
 #[tauri::command]
@@ -109,10 +114,20 @@ pub fn auth_login(password: String, state: tauri::State<'_, AppState>) -> Result
     let salt = hex::decode(salt).map_err(|_| "stored salt is invalid".to_string())?;
     let actual = hash_password(&password, &salt);
     if constant_time_eq(&hex::encode(actual), &expected) {
+        state.unlock_vault();
         Ok(())
     } else {
         Err("invalid password".into())
     }
+}
+
+/// Locks the vault again: the idle timeout, or signing out.
+///
+/// The interface hiding itself is not enough on its own, because the backend
+/// raises desktop notifications whether or not anything is on screen.
+#[tauri::command]
+pub fn auth_lock(state: tauri::State<'_, AppState>) {
+    state.lock_vault();
 }
 
 fn validate_recovery(question: &str, answer: &str) -> Result<(), String> {
