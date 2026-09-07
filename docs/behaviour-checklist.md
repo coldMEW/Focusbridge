@@ -41,7 +41,9 @@ because the PC asked deliberately; what R2 forbids is the PC reaching out unaske
 | Cross-network sync works with the phone on cellular and the PC on Wi-Fi | Real device: relay socket → secure session ready → phone authenticated on 127.0.0.1 |
 | Reconnecting a known phone works on any network | Real device, over cellular; `relay connection requested reason="the user asked to reconnect a saved phone"` |
 | Rendering the pairing panel does not make this PC reachable; only pressing the button does | `for_pairing` is false for the sidebar panel |
-| The desktop does not auto-connect to the last phone when automatic reconnection is off | AUTH gate in `ws_server`: a saved key needs an explicit allowance |
+| The desktop does not attach to the last phone when automatic reconnection is off, **on any transport** — local network included, not only the relay | `ws_server::attach_tests`. This shipped broken twice: the check asked `peer.ip().is_loopback()`, so the setting worked over the relay and did nothing over the LAN, and the desktop reattached on every launch |
+| A phone turned away by that setting is not retried in a loop | `state.take_known_phone_refusal()` sends the relay client to idle. It used to reconnect straight back into the same refusal every few seconds for as long as the pairing screen was on display |
+| The one-time allowance is spent only when it is actually needed | `ws_server::attach_tests::the_allowance_is_not_spent_unless_it_is_needed` |
 | A pairing session survives a desktop restart between scanning and connecting | persisted as `pairing.session.v1` |
 | The local transport probe is answered over the relay bridge, so sessions do not die after two minutes | `Message::Ping` → `Pong` in the bridge |
 

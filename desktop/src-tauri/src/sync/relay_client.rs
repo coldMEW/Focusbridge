@@ -162,6 +162,19 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
                             .await
                     {
                         warn!(error = %error, "relay phone session ended");
+                        // Turned away on purpose: reconnecting would arrive at the
+                        // same refusal, and did, every few seconds. Wait to be
+                        // asked for instead.
+                        if state.take_known_phone_refusal() {
+                            idle_once(
+                                state,
+                                "a saved phone asked to reconnect and automatic \
+                                 reconnection is off; pick it under previous \
+                                 connections to let it in",
+                            );
+                            state.await_relay_request().await;
+                            break;
+                        }
                         // A phone whose key this PC has not pinned cannot get past
                         // the handshake, and until now nothing here noticed: the
                         // pairing looked fine over the LAN and simply never worked

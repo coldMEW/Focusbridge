@@ -49,6 +49,7 @@ pub struct AppState {
     known_phone_allowed: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     vault_unlocked: Arc<AtomicBool>,
+    known_phone_refused: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -68,7 +69,24 @@ impl AppState {
             // Starts locked, every launch. Nothing from the phone may be put on
             // screen before someone has proved they are allowed to read it.
             vault_unlocked: Arc::new(AtomicBool::new(false)),
+            known_phone_refused: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Records that a phone was turned away because the user has automatic
+    /// reconnection off.
+    ///
+    /// The relay client needs to know, because the refusal reaches it as an
+    /// ordinary closed session and it reconnected straight into the same refusal
+    /// -- a loop, several times a minute, for as long as the pairing screen was
+    /// on display. A refusal is a decision; nothing changes until the user asks
+    /// for the phone.
+    pub fn note_known_phone_refused(&self) {
+        self.known_phone_refused.store(true, Ordering::Release);
+    }
+
+    pub fn take_known_phone_refusal(&self) -> bool {
+        self.known_phone_refused.swap(false, Ordering::AcqRel)
     }
 
     /// True once the local vault has been opened in this run.
@@ -112,6 +130,7 @@ impl AppState {
     /// code on screen does not need it, because presenting the current pairing
     /// key is itself the request.
     pub fn allow_known_phone(&self) {
+        self.known_phone_refused.store(false, Ordering::Release);
         self.known_phone_allowed.store(true, Ordering::Release);
     }
 

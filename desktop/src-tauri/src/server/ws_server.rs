@@ -215,29 +215,34 @@ where
 
         match handle_envelope(&envelope, &expected_key) {
             IncomingDecision::AuthAccepted => {
-                // Over the relay, with automatic reconnection off, only a phone
-                // that has just scanned the code on screen may connect. It proves
-                // that by presenting the current pairing key; a phone reattaching
-                // presents an older saved one, which is precisely the silent
-                // reconnection the user turned off. Picking a saved phone grants a
-                // one-time allowance instead.
-                if peer.ip().is_loopback()
-                    && !crate::sync::relay_api::auto_connect(&state.db_path).unwrap_or(true)
-                {
-                    let just_scanned = state
-                        .current_pairing()
-                        .is_some_and(|session| session.pairing_key == expected_key)
-                        && state.pairing_code_is_live();
-                    if !just_scanned && !state.take_known_phone_allowance() {
-                        warn!(peer = %peer, "refused a known phone; automatic reconnection is off");
-                        send_text(
-                            &mut ws,
-                            r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
-                        )
-                        .await
-                        .ok();
-                        break;
-                    }
+                // With automatic reconnection off, only a phone that has just
+                // scanned the code on screen may attach. It proves that by
+                // presenting the current pairing key; a phone reattaching presents
+                // an older saved one, which is precisely the silent reconnection
+                // the user turned off. Picking a saved phone grants a one-time
+                // allowance instead.
+                //
+                // This asks nothing about how the phone arrived. The check used to
+                // apply only to the relay, so the same phone the user had told this
+                // PC not to reattach to did exactly that over the local network,
+                // every launch. The setting is about which phone may attach, not
+                // about which cable it came down.
+                let automatic =
+                    crate::sync::relay_api::auto_connect(&state.db_path).unwrap_or(true);
+                let just_scanned = state
+                    .current_pairing()
+                    .is_some_and(|session| session.pairing_key == expected_key)
+                    && state.pairing_code_is_live();
+                if !may_attach(automatic, just_scanned, || state.take_known_phone_allowance()) {
+                    warn!(peer = %peer, "refused a known phone; automatic reconnection is off");
+                    state.note_known_phone_refused();
+                    send_text(
+                        &mut ws,
+                        r#"{"version":1,"type":"AUTH_FAILED","payload":{}}"#.into(),
+                    )
+                    .await
+                    .ok();
+                    break;
                 }
                 info!(peer = %peer, "phone authenticated");
                 active_pairing_key = Some(expected_key.clone());
@@ -570,6 +575,18 @@ fn expected_pairing_key_for_envelope(state: &AppState, envelope: &Envelope) -> O
         })
 }
 
+/// Whether a phone that has authenticated may actually attach.
+///
+/// Split out because it is the whole of the "reconnect to the last phone
+/// automatically" setting, and it was previously buried inside a condition that
+/// also asked which transport the phone arrived on -- so the setting worked over
+/// the relay and did nothing over the local network.
+///
+/// The allowance is taken only when it is needed, because taking it consumes it.
+fn may_attach(automatic: bool, just_scanned: bool, take_allowance: impl FnOnce() -> bool) -> bool {
+    automatic || just_scanned || take_allowance()
+}
+
 async fn send_notification_ack<S>(
     ws: &mut WebSocketStream<S>,
     pairing_key: Option<&str>,
@@ -597,4 +614,50 @@ where
         .await
         .context("send notification ack")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod attach_tests {
+    use super::may_attach;
+    use std::cell::Cell;
+
+    #[test]
+    fn a_phone_that_just_scanned_the_code_always_attaches() {
+        assert!(may_attach(false, true, || false));
+    }
+
+    #[test]
+    fn a_saved_phone_is_refused_when_automatic_reconnection_is_off() {
+        // The bug the user hit twice: this held over the relay and not over the
+        // local network, so the desktop reattached to the last phone on launch
+        // with the setting plainly turned off.
+        assert!(!may_attach(false, false, || false));
+    }
+
+    #[test]
+    fn a_saved_phone_attaches_when_the_user_asked_for_it() {
+        assert!(may_attach(false, false, || true));
+    }
+
+    #[test]
+    fn automatic_reconnection_lets_a_saved_phone_straight_in() {
+        assert!(may_attach(true, false, || false));
+    }
+
+    #[test]
+    fn the_allowance_is_not_spent_unless_it_is_needed() {
+        // It is a single-use permission; consuming it on a connection that was
+        // already allowed would silently refuse the next one.
+        let taken = Cell::new(false);
+        assert!(may_attach(true, false, || {
+            taken.set(true);
+            true
+        }));
+        assert!(!taken.get());
+        assert!(may_attach(false, true, || {
+            taken.set(true);
+            true
+        }));
+        assert!(!taken.get());
+    }
 }
