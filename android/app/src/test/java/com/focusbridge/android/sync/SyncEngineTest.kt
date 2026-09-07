@@ -24,7 +24,8 @@ class SyncEngineTest {
         "desktop", "wss://first", endpointCandidates = "wss://second",
         pairingKey = "a".repeat(64), certFingerprint = "b".repeat(64),
     )
-    private val engine = SyncEngine(pairings, notifications, client, config)
+    private val localNetwork = mockk<LocalNetworkProbe>()
+    private val engine = SyncEngine(pairings, notifications, client, config, localNetwork)
     private val attempts = mutableListOf<String>()
     private val relayPairing = pairing.copy(
         relayUrl = "https://relay.example",
@@ -42,6 +43,7 @@ class SyncEngineTest {
         every { client.state } returns state
         every { client.isConnected() } answers { state.value == ConnectionState.CONNECTED }
         every { client.hasPairingConsent() } returns false
+        every { localNetwork.hasLocalNetwork() } returns true
         every { client.pairingRejection } returns MutableStateFlow(null)
         every { client.connect(any(), any(), any(), any()) } answers {
             attempts += thirdArg<String>()
@@ -288,6 +290,26 @@ class SyncEngineTest {
         // ...and the relay attempt does not ask either.
         verify(exactly = 0) {
             client.connect(any(), any(), any(), any(), any(), requireApproval = true)
+        }
+    }
+
+    @Test fun onMobileDataTheLocalAddressesAreNotWaitedOn() = runBlocking {
+        // Four seconds each, for addresses that cannot answer. It is the bulk of
+        // the delay between scanning a code and the phone arriving.
+        every { localNetwork.hasLocalNetwork() } returns false
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
+        coEvery { config.get("manual_disconnect") } returns "false"
+        every { client.isManuallyDisconnected() } returns false
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        engine.connectActivePairing()
+
+        verify(exactly = 0) {
+            client.connect(any(), any(), any(), any(), useRelay = false, requireApproval = any())
+        }
+        verify(atLeast = 1) {
+            client.connect(any(), any(), any(), any(), useRelay = true, requireApproval = any())
         }
     }
 

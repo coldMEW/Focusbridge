@@ -21,6 +21,13 @@ pub struct RelayStatus {
     pub phone_enrolled: bool,
     /// Whether this PC rejoins the last paired phone without being asked.
     pub auto_connect: bool,
+    /// True after the user disconnected here, until they ask for a phone again.
+    ///
+    /// While it holds, this PC is not present at the relay, so a code on screen
+    /// cannot be scanned by a phone on another network -- it would sit at
+    /// "connecting" with nothing to reach. The pairing screen uses this to avoid
+    /// showing a code that will not work.
+    pub paused: bool,
 }
 
 fn status(state: &AppState) -> Result<RelayStatus, String> {
@@ -39,6 +46,7 @@ fn status(state: &AppState) -> Result<RelayStatus, String> {
         expires_at: pair.as_ref().map(|pair| pair.expires_at),
         phone_enrolled,
         auto_connect: relay_api::auto_connect(&state.db_path).map_err(|error| error.to_string())?,
+        paused: state.is_paused(),
     })
 }
 

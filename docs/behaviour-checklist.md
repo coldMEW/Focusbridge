@@ -61,6 +61,16 @@ because the PC asked deliberately; what R2 forbids is the PC reaching out unaske
 | A connected phone sends notifications even if a disconnect flag was never cleared | `SyncEngineTest.aConnectedPhoneSendsEvenIfADisconnectWasNeverCleared` |
 | A genuinely disconnected phone holds notifications as pending rather than dropping them | `SyncEngineTest.aDisconnectedPhoneHoldsNotificationsInsteadOfSending` |
 
+## Pairing again after a disconnect
+
+| Behaviour | Verified by |
+|---|---|
+| Asking for a pairing code resumes this PC even when the previous code is still valid | `pairing_cmd::pairing_request_tests`. Resuming was tied to minting a *new* session, so scanning after a disconnect resumed nothing and a phone on mobile data sat at "connecting" |
+| A code is never shown that a phone could not reach | `PairingQR` asks `relay_status.paused` and offers "Show a pairing code" instead. A displayed code is a working code |
+| Scanning is consent: the phone does not ask permission for a pairing just made | `SyncEngineTest.scanningACodeConnectsWithoutAskingEvenWithTheSwitchOff` |
+| A pairing the desktop cannot recognise stops retrying and says to scan again | AUTH_FAILED carries `unknown_pairing`; the phone shows it and stops dialing, instead of retrying every 15s forever on mobile data |
+| On mobile data the phone does not wait on LAN addresses that cannot answer | `SyncEngineTest.onMobileDataTheLocalAddressesAreNotWaitedOn`; this was 4s per saved address before the relay was even tried |
+
 ## Notifications
 
 | Behaviour | Verified by |

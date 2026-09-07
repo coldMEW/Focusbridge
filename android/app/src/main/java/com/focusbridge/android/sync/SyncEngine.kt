@@ -23,6 +23,7 @@ class SyncEngine @Inject constructor(
     private val notifications: NotificationRepository,
     private val client: WebSocketClient,
     private val config: ConfigRepository,
+    private val localNetwork: LocalNetworkProbe,
 ) {
     private val connectMutex = Mutex()
 
@@ -108,7 +109,11 @@ class SyncEngine @Inject constructor(
             // working with no Internet at all. It is only usable when this phone
             // may connect without asking, because dialing an address is the only
             // way to reach it and there is no moment at which to prompt.
-            if (automatic && !quiet) {
+            // Saved LAN addresses are private ones, unreachable from mobile data.
+            // Trying each of them anyway costs four seconds apiece before the relay
+            // is even attempted, which is most of the wait after scanning a code
+            // away from home.
+            if (automatic && !quiet && localNetwork.hasLocalNetwork()) {
                 for (endpoint in pairing.candidateEndpoints()) {
                     if (isManuallyDisconnected()) return@withLock
                     client.connect(
