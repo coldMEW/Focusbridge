@@ -31,12 +31,17 @@ describe("desktop connection health", () => {
     ).toBe("CONNECTED");
   });
 
-  it("expires only after the twelve-second safety boundary", () => {
+  it("expires only once the backend has given up too", () => {
+    // The window must stay outside the backend's own 90s silence budget: a
+    // narrower one reported a disconnection nothing had actually made.
     expect(desktopConnectionStateFromDiagnostics(
-      { connected: true, lastHeartbeatAt: now - 12_000 }, now,
+      { connected: true, lastHeartbeatAt: now - 89_000 }, now,
     )).toBe("CONNECTED");
     expect(desktopConnectionStateFromDiagnostics(
-      { connected: true, lastHeartbeatAt: now - 12_001 }, now,
+      { connected: true, lastHeartbeatAt: now - 100_000 }, now,
+    )).toBe("CONNECTED");
+    expect(desktopConnectionStateFromDiagnostics(
+      { connected: true, lastHeartbeatAt: now - 100_001 }, now,
     )).toBe("DISCONNECTED");
   });
 

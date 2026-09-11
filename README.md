@@ -129,6 +129,15 @@ public release, and the remaining gates are tracked in [`docs/`](docs/).
 
 ## Documentation
 
+- [Apple platforms research](docs/apple/) — whether macOS and iPhone are
+  possible, what Apple allows, and the phased plan. Start at
+  [the verdict](docs/apple/00-verdict.md).
+- [Blueprint](docs/BLUEPRINT.md) — the whole repository in one document: what
+  every part is, where it lives, every bug with its cause and its fix, every
+  feature with how it was built, and how to build and test each piece. Start
+  here.
+- [Behaviour checklist](docs/behaviour-checklist.md) — every feature and fixed
+  bug with the test that holds it. Read before committing.
 - [Cross-network architecture](docs/cross-network-architecture.md) — how the two
   transports work and what each component is trusted with
 - [Phone Link comparison](docs/phone-link-gap-analysis.md) — feature-by-feature,

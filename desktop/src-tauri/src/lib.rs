@@ -31,13 +31,89 @@ fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+/// Where the log is kept: beside the database, in this app's own data
+/// directory. Resolved without Tauri, because logging has to be running before
+/// the app builder exists.
+fn log_directory() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME")
+        .map(|home| std::path::PathBuf::from(home).join("Library/Application Support"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/share"))
+        });
+    Some(base?.join("com.focusbridge.desktop").join("logs"))
+}
+
+/// A log file that survives the run, and one previous run.
+///
+/// `&File` is a `Write`, and the handle is opened for append, so concurrent
+/// writes from the worker threads land whole rather than interleaved.
+struct LogFile(std::sync::Arc<std::fs::File>);
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogFile {
+    type Writer = &'a std::fs::File;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        &self.0
+    }
+}
+
+/// Sends the log to a file as well as to standard output.
+///
+/// On Windows this is a windowed process: it has no console, so everything
+/// written to standard output went nowhere at all. Worse, the filter came from
+/// `RUST_LOG` with no default, which nobody sets on an installed copy, so the
+/// app produced no diagnostics of any kind. A disconnection that happens once
+/// every few hours cannot be investigated that way -- the question "why did it
+/// drop" had no answer anywhere on the machine.
+///
+/// Nothing here changes what is logged, only where it goes. No call site logs
+/// message content, capabilities or key material, and none may start.
+fn install_logging() {
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+
+    // Default to `info` instead of silence, and still let RUST_LOG override it.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let file = log_directory().and_then(|dir| {
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join("focusbridge.log");
+        // Keep one previous file, and start a new one once this grows past a
+        // few megabytes, so the log cannot fill the disk of a machine that is
+        // left running for weeks.
+        if std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0) > 8 * 1024 * 1024 {
+            let _ = std::fs::rename(&path, dir.join("focusbridge.log.1"));
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()
+    });
+
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(false);
+    match file {
+        // A log file that cannot be opened must not stop the app starting.
+        Some(file) => builder
+            .with_writer(LogFile(std::sync::Arc::new(file)).and(std::io::stdout))
+            .try_init()
+            .ok(),
+        None => builder.try_init().ok(),
+    };
+}
+
 pub fn run() {
     configure_platform_identity();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init()
-        .ok();
+    install_logging();
 
     install_crypto_provider();
 
@@ -56,6 +132,10 @@ pub fn run() {
             app.manage(database);
             let cert = pairing::cert_manager::load_or_generate(&app_data_dir)?;
             let app_state = AppState::new(db_path, cert);
+            // Carry the user's popup preference across restarts; absent means on.
+            app_state.set_desktop_notifications_enabled(
+                commands::settings_cmd::desktop_notifications_enabled(&app_state.db_path),
+            );
             app.manage(app_state.clone());
             info!("focusbridge-desktop setup");
             tray::menu::install(&handle)?;
@@ -95,6 +175,7 @@ pub fn run() {
             commands::settings_cmd::get_settings,
             commands::settings_cmd::set_lock_timeout_minutes,
             commands::settings_cmd::set_study_mode,
+            commands::settings_cmd::set_desktop_notifications,
             commands::settings_cmd::set_rule_text,
             commands::notification_cmd::list_notifications,
             commands::notification_cmd::mark_important,
@@ -113,6 +194,7 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.emit("focusbridge://close-requested", ());
+                let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }

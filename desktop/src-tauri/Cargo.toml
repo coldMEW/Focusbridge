@@ -5,7 +5,12 @@ edition = "2021"
 rust-version = "1.75"
 
 [lib]
-test = false
+# The unit tests in src/ are part of the safety net and must actually run.
+# With test = false they were compiled by nothing and run by nothing, while
+# docs/behaviour-checklist.md named several of them as the guarantee holding
+# the connect/disconnect rules in place -- which is why those rules regressed
+# three times without a single test going red.
+test = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -51,6 +56,11 @@ windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_Security_
 
 [dev-dependencies]
 tempfile = "3"
+# Test-only: lets the heartbeat tests run a 90-second silence budget on a paused
+# clock instead of shortening the production timers or sleeping for real.
+# Dev-dependency features are not enabled for `cargo build`, so this is not in
+# the shipped binary.
+tokio = { version = "1.36", features = ["full", "test-util"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "2.11"

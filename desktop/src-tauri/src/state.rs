@@ -50,6 +50,34 @@ pub struct AppState {
     paused: Arc<AtomicBool>,
     vault_unlocked: Arc<AtomicBool>,
     known_phone_refused: Arc<AtomicBool>,
+    desktop_notifications_enabled: Arc<AtomicBool>,
+    /// The phone the user has connected during this run, if any.
+    ///
+    /// This is the backend half of a pair of features that used to be one flag
+    /// (see `focusbridge_core::attach`). "Reconnect to the last phone
+    /// automatically" is the user's, and it answers only "may this PC take a
+    /// saved phone that turns up unasked -- at startup, or any other time?"
+    /// Keeping a connection the user has already made alive across a dropped
+    /// transport is this one, and it is plumbing, not a preference.
+    ///
+    /// Mixing them is what broke: the setting was enforced with a single-use
+    /// allowance, so the phone the user had just picked was let in exactly once,
+    /// and the next reattach was refused for any reason at all. A relay socket
+    /// replaced, a Wi-Fi handover, a moment of packet loss -- any of them ended
+    /// the session for good, on a perfectly stable connection, after thirty
+    /// seconds or three hours depending only on when the first hiccup landed.
+    ///
+    /// Held in memory only, so a restart is still governed by the user's
+    /// setting, and cleared by a manual disconnect so that stays absolute.
+    approved_phone: Arc<Mutex<Option<String>>>,
+    /// Set when a phone was turned away by the reconnection setting.
+    ///
+    /// While it holds, this PC stays where it is instead of re-dialing the
+    /// relay. Re-dialing retires the pair at the relay, which force-closes the
+    /// phone's socket too, so the refusal loop was actively kicking the phone
+    /// off every thirty-five seconds for as long as a pairing code was on
+    /// screen. Cleared the moment the user actually asks for a connection.
+    awaiting_request_after_refusal: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -70,7 +98,74 @@ impl AppState {
             // screen before someone has proved they are allowed to read it.
             vault_unlocked: Arc::new(AtomicBool::new(false)),
             known_phone_refused: Arc::new(AtomicBool::new(false)),
+            // On unless the user has turned it off; startup reads the stored
+            // preference over the top of this.
+            desktop_notifications_enabled: Arc::new(AtomicBool::new(true)),
+            approved_phone: Arc::new(Mutex::new(None)),
+            awaiting_request_after_refusal: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Records that this phone is the one the user is connected to.
+    ///
+    /// Called once a phone has authenticated, whichever way it got in -- by
+    /// scanning the code on screen, or by being picked under previous
+    /// connections. From here on it may come back after a dropped transport
+    /// without asking again, because the user has already said yes to it.
+    pub fn approve_phone_for_this_run(&self, device_id: &str) {
+        // Whatever was refused before, a phone is in now: there is nothing left
+        // to stay parked for.
+        self.awaiting_request_after_refusal
+            .store(false, Ordering::Release);
+        let mut approved = self
+            .approved_phone
+            .lock()
+            .expect("approved phone lock poisoned");
+        if approved.as_deref() != Some(device_id) {
+            tracing::info!("this phone is now the connected one for this run");
+            *approved = Some(device_id.to_string());
+        }
+    }
+
+    /// True when this is the phone the user already connected in this run.
+    ///
+    /// One slot, so picking a different phone drops the first one's standing
+    /// rather than leaving both able to walk in.
+    pub fn is_approved_for_this_run(&self, device_id: &str) -> bool {
+        self.approved_phone
+            .lock()
+            .expect("approved phone lock poisoned")
+            .as_deref()
+            == Some(device_id)
+    }
+
+    /// Forgets the connected phone. A disconnect has to mean disconnect, so
+    /// nothing survives it that would let the same phone back in unasked.
+    pub fn forget_approved_phone(&self) {
+        *self
+            .approved_phone
+            .lock()
+            .expect("approved phone lock poisoned") = None;
+    }
+
+    /// True while a refused phone means this PC should stay put rather than
+    /// re-dial the relay into the same refusal.
+    pub fn awaiting_request_after_refusal(&self) -> bool {
+        self.awaiting_request_after_refusal.load(Ordering::Acquire)
+    }
+
+    /// Whether phone notifications are echoed as desktop popups.
+    ///
+    /// Held here rather than read from the database per notification: the
+    /// answer is needed on the path a message takes from the phone to the
+    /// screen, and that path should not open the encrypted database to find it.
+    pub fn desktop_notifications_enabled(&self) -> bool {
+        self.desktop_notifications_enabled.load(Ordering::Acquire)
+    }
+
+    pub fn set_desktop_notifications_enabled(&self, on: bool) {
+        self.desktop_notifications_enabled
+            .store(on, Ordering::Release);
     }
 
     /// Records that a phone was turned away because the user has automatic
@@ -83,6 +178,11 @@ impl AppState {
     /// for the phone.
     pub fn note_known_phone_refused(&self) {
         self.known_phone_refused.store(true, Ordering::Release);
+        // Stay put until the user asks. Re-dialing the relay retires the pair
+        // there, which closes the phone's socket as well, so the loop did not
+        // merely retry a refusal -- it kicked the phone off every time round.
+        self.awaiting_request_after_refusal
+            .store(true, Ordering::Release);
     }
 
     pub fn take_known_phone_refusal(&self) -> bool {
@@ -183,6 +283,9 @@ impl AppState {
             .lock()
             .expect("relay idle lock poisoned") = None;
         self.relay_requested.store(true, Ordering::Release);
+        // The user asking is exactly the event the refusal was waiting for.
+        self.awaiting_request_after_refusal
+            .store(false, Ordering::Release);
         // notify_one stores a permit when nobody is parked yet. notify_waiters
         // does not, so a request arriving in the gap between the supervisor
         // testing the flag and parking was dropped, leaving it asleep forever
@@ -335,6 +438,9 @@ impl AppState {
         self.clear_pairing_session();
         // A pending allowance would let the phone straight back in.
         self.known_phone_allowed.store(false, Ordering::Release);
+        // So would its standing as the phone connected in this run. Surviving a
+        // disconnect is precisely what rule two forbids.
+        self.forget_approved_phone();
         self.relay_requested.store(false, Ordering::Release);
         self.clear_phone_sender();
         self.update_diagnostics(|diag| {
@@ -364,6 +470,11 @@ impl AppState {
             .unwrap_or(false)
         {
             *current = None;
+            // Say why, out loud. The reason was recorded for the diagnostics
+            // panel and nowhere else, so "it disconnected on its own" could only
+            // be answered by catching the app with the panel open. It is the
+            // first thing anyone needs when a session ends by itself.
+            tracing::warn!(reason, "the phone session ended");
             self.update_diagnostics(|diag| {
                 diag.connected = false;
                 diag.connected_at = None;
@@ -489,5 +600,95 @@ mod vault_lock_tests {
         // desktop left alone stops showing messages again.
         state.lock_vault();
         assert!(!state.vault_is_unlocked());
+    }
+}
+
+#[cfg(test)]
+mod connected_phone_tests {
+    use super::*;
+
+    fn state() -> AppState {
+        let dir = std::env::temp_dir().join(format!("fb-connected-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cert = focusbridge_core::cert::generate_self_signed("focusbridge-test")
+            .expect("generate a certificate for the test");
+        AppState::new(dir.join("test.db"), cert)
+    }
+
+    #[test]
+    fn a_launch_knows_no_connected_phone() {
+        // The reconnection setting still governs starting a connection. Carrying
+        // the standing across a restart would be the silent reattach on launch
+        // that this project has shipped broken twice.
+        assert!(!state().is_approved_for_this_run("phone-a"));
+    }
+
+    #[test]
+    fn the_phone_that_connected_may_come_back() {
+        // The bug: the setting was enforced per socket, so the phone the user had
+        // just connected was refused the moment the transport under it dropped.
+        let state = state();
+        state.approve_phone_for_this_run("phone-a");
+        assert!(state.is_approved_for_this_run("phone-a"));
+    }
+
+    #[test]
+    fn only_that_phone_may_come_back() {
+        let state = state();
+        state.approve_phone_for_this_run("phone-a");
+        assert!(!state.is_approved_for_this_run("phone-b"));
+        // One slot: connecting a second phone ends the first one's standing
+        // rather than leaving both able to walk in.
+        state.approve_phone_for_this_run("phone-b");
+        assert!(!state.is_approved_for_this_run("phone-a"));
+        assert!(state.is_approved_for_this_run("phone-b"));
+    }
+
+    #[test]
+    fn a_manual_disconnect_ends_the_standing() {
+        // Rule two. The phone the user was connected to is exactly the phone a
+        // disconnect is aimed at, so this must not outlive it.
+        let state = state();
+        state.approve_phone_for_this_run("phone-a");
+        state.mark_manual_disconnect();
+        assert!(!state.is_approved_for_this_run("phone-a"));
+    }
+
+    #[test]
+    fn a_refusal_parks_this_pc_until_the_user_asks() {
+        // Re-dialing reached the same refusal, and rejoining the relay retires
+        // the pair there, which closes the phone's socket too -- so the loop
+        // kicked the phone off every thirty-five seconds.
+        let state = state();
+        assert!(!state.awaiting_request_after_refusal());
+        state.note_known_phone_refused();
+        assert!(state.awaiting_request_after_refusal());
+        state.request_relay_connection("the user asked to reconnect a saved phone");
+        assert!(!state.awaiting_request_after_refusal());
+    }
+
+    #[test]
+    fn the_safety_net_timeout_is_not_the_user_asking() {
+        // `await_relay_request` returns on a timeout as well as on a request, and
+        // treating that return as permission to dial is what made the loop.
+        let state = state();
+        state.note_known_phone_refused();
+        assert!(state.awaiting_request_after_refusal());
+        assert!(
+            !state.relay_connection_requested(),
+            "nothing has asked for a connection"
+        );
+        assert!(
+            state.awaiting_request_after_refusal(),
+            "only the user asking may lift this"
+        );
+    }
+
+    #[test]
+    fn a_phone_getting_in_clears_the_parking() {
+        let state = state();
+        state.note_known_phone_refused();
+        state.approve_phone_for_this_run("phone-a");
+        assert!(!state.awaiting_request_after_refusal());
     }
 }

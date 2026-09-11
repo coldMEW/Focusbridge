@@ -4,6 +4,7 @@ use crate::server::heartbeat::PeerHeartbeat;
 use crate::server::socket_io::{send_frame_before, send_text, service_while, PendingMessages};
 use crate::state::AppState;
 use anyhow::{Context, Result};
+use focusbridge_core::attach::may_attach;
 use focusbridge_core::handler::{handle_envelope, IncomingDecision};
 use focusbridge_core::protocol::{Envelope, MessageType};
 use focusbridge_core::secure_envelope::{decrypt_payload, encrypt_envelope};
@@ -176,6 +177,16 @@ where
             // It must not mutate notifications, inventory, or current diagnostics.
             continue;
         }
+        if active_pairing_key.is_some() && msg.is_text() {
+            // Liveness is the phone's silence, not the transport pong alone. A
+            // handset streaming notifications is plainly connected even when its
+            // pong is late, and hanging the session on that one reply is what
+            // dropped healthy connections at random. Only application frames
+            // count here: a pong is a challenge, and it is answered in
+            // `acknowledge` or not at all.
+            heartbeat.mark_alive(Instant::now());
+            state.mark_heartbeat(now_ms() as i64);
+        }
         if !msg.is_text() {
             match msg {
                 Message::Close(_) => break,
@@ -215,19 +226,18 @@ where
 
         match handle_envelope(&envelope, &expected_key) {
             IncomingDecision::AuthAccepted => {
-                // With automatic reconnection off, only a phone that has just
-                // scanned the code on screen may attach. It proves that by
-                // presenting the current pairing key; a phone reattaching presents
-                // an older saved one, which is precisely the silent reconnection
-                // the user turned off. Picking a saved phone grants a one-time
-                // allowance instead.
+                // Feature 1, the user's: may this PC take a saved phone that
+                // arrives without anyone having asked for it -- at startup, or
+                // any other time it turns up on its own? Off, only a phone
+                // presenting the code currently on screen may attach; picking a
+                // saved phone grants a one-time allowance instead.
                 //
                 // This asks nothing about how the phone arrived. The check used to
                 // apply only to the relay, so the same phone the user had told this
                 // PC not to reattach to did exactly that over the local network,
                 // every launch. The setting is about which phone may attach, not
                 // about which cable it came down.
-                let automatic =
+                let auto_first_connection =
                     crate::sync::relay_api::auto_connect(&state.db_path).unwrap_or(true);
                 // True when this phone presents the key of the code currently on
                 // screen. That means "scanned since the disconnect" only because
@@ -241,11 +251,34 @@ where
                 // in" is otherwise unanswerable from the outside, and this rule
                 // has been wrong more than once.
                 let paused = state.is_paused();
+                // Which phone this is, needed before the decision rather than
+                // after it: "the user already connected this one" is part of the
+                // rule now, not just bookkeeping for the saved-device list.
+                let qr_device_id = envelope
+                    .payload
+                    .get("deviceId")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("android-phone");
+                let device_id = envelope
+                    .payload
+                    .get("phoneInstallId")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(qr_device_id);
+                // Feature 2, the backend's: this is the phone the user already
+                // connected in this run, coming back because the transport under
+                // it dropped. Putting that back is plumbing, not a preference --
+                // the user said yes to this phone once and is not asked again
+                // every time a radio blinks. Enforcing feature 1 per socket made
+                // it do this job too, and badly: the single-use allowance was
+                // spent on the first attach, so every hiccup was permanent.
+                let resuming_the_users_connection = state.is_approved_for_this_run(device_id);
                 info!(
                     peer = %peer,
                     paused,
-                    automatic,
+                    auto_first_connection,
                     holds_the_code_on_screen,
+                    resuming_the_users_connection,
                     "deciding whether this phone may attach"
                 );
                 // Scanning the code that is on screen is the user asking for this
@@ -254,13 +287,19 @@ where
                     info!("a phone scanned the code on screen; the disconnect is over");
                     state.resume();
                 }
-                if !may_attach(paused, automatic, holds_the_code_on_screen, || {
-                    let granted = state.take_known_phone_allowance();
-                    if granted {
-                        info!("allowed: the user asked for this phone by name");
-                    }
-                    granted
-                }) {
+                if !may_attach(
+                    paused,
+                    auto_first_connection,
+                    holds_the_code_on_screen,
+                    resuming_the_users_connection,
+                    || {
+                        let granted = state.take_known_phone_allowance();
+                        if granted {
+                            info!("allowed: the user asked for this phone by name");
+                        }
+                        granted
+                    },
+                ) {
                     warn!(
                         peer = %peer,
                         paused = state.is_paused(),
@@ -281,6 +320,11 @@ where
                     break;
                 }
                 info!(peer = %peer, "phone authenticated");
+                // However it got in -- scanning the code, or being picked by
+                // name -- the user has now said yes to this phone. It may come
+                // back on its own when the transport drops under it, until the
+                // user disconnects or this PC restarts.
+                state.approve_phone_for_this_run(device_id);
                 active_pairing_key = Some(expected_key.clone());
                 state.set_phone_sender(outbound_tx.clone());
                 // The relay bridge reaches this server over loopback, so a loopback
@@ -288,17 +332,6 @@ where
                 // it as "wss" would tell the user they are on their local network.
                 let via_relay = peer.ip().is_loopback();
                 state.mark_transport(if via_relay { "relay" } else { "wss" });
-                let qr_device_id = envelope
-                    .payload
-                    .get("deviceId")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("android-phone");
-                let device_id = envelope
-                    .payload
-                    .get("phoneInstallId")
-                    .and_then(|value| value.as_str())
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or(qr_device_id);
                 let device_name = envelope
                     .payload
                     .get("deviceName")
@@ -343,7 +376,11 @@ where
                 }
                 app.emit("focusbridge://connection", "CONNECTED")?;
                 if !notified_connected {
-                    desktop_notifications::show_connection_notification(&app, true);
+                    if state.desktop_notifications_enabled() {
+                        desktop_notifications::show_connection_notification(&app, true);
+                    }
+                    // Tracked whether or not it was shown, so turning the popups
+                    // back on mid-session cannot produce a second "connected".
                     notified_connected = true;
                 }
             }
@@ -427,7 +464,7 @@ where
     if state.clear_phone_sender_if_current_with_reason(&outbound_tx, &reason) {
         store::mark_pairings_disconnected(&state.db_path)?;
         app.emit("focusbridge://connection", "DISCONNECTED")?;
-        if notified_connected {
+        if notified_connected && state.desktop_notifications_enabled() {
             desktop_notifications::show_connection_notification(&app, false);
         }
     }
@@ -531,9 +568,12 @@ fn apply_work_item(
             if !current() {
                 return Ok(None);
             }
-            // Only pushed into the interface once it is entitled to show it. The
-            // inbox loads itself from the database when it mounts, which happens
-            // after unlocking, so nothing is missed by staying quiet here.
+            // Only pushed into the interface once it is entitled to show it.
+            // Nothing is missed by staying quiet: the row is stored regardless,
+            // and the inbox loads the stored history from the database when a
+            // phone attaches. (It used to load on mount instead -- before the
+            // vault is open, so the load was refused and the history never
+            // appeared at all.)
             if state.vault_is_unlocked() {
                 app.emit("focusbridge://notification", &row)?;
             }
@@ -541,10 +581,14 @@ fn apply_work_item(
                 // Stored either way, so nothing is lost and the inbox is complete
                 // the moment the vault opens; but not displayed, because a desktop
                 // notification puts the message on screen for anyone walking past.
-                if state.vault_is_unlocked() {
-                    desktop_notifications::show_phone_notification(app, &row);
-                } else {
+                if !state.vault_is_unlocked() {
                     info!("held a notification off screen: the vault is locked");
+                } else if !state.desktop_notifications_enabled() {
+                    // The user asked for no popups. The message is stored and is
+                    // in the inbox already; only the popup is skipped.
+                    info!("held a notification off screen: desktop popups are off");
+                } else {
+                    desktop_notifications::show_phone_notification(app, &row);
                 }
             }
             return Ok(Some(row.id));
@@ -637,18 +681,6 @@ fn expected_pairing_key_for_envelope(state: &AppState, envelope: &Envelope) -> O
 /// name brings it back, and both of those resume it in the same breath.
 ///
 /// The allowance is taken only when it is needed, because taking it consumes it.
-fn may_attach(
-    paused: bool,
-    automatic: bool,
-    holds_the_code_on_screen: bool,
-    take_allowance: impl FnOnce() -> bool,
-) -> bool {
-    if paused {
-        return holds_the_code_on_screen || take_allowance();
-    }
-    automatic || holds_the_code_on_screen || take_allowance()
-}
-
 async fn send_notification_ack<S>(
     ws: &mut WebSocketStream<S>,
     pairing_key: Option<&str>,
@@ -676,63 +708,4 @@ where
         .await
         .context("send notification ack")?;
     Ok(())
-}
-
-#[cfg(test)]
-mod attach_tests {
-    use super::may_attach;
-    use std::cell::Cell;
-
-    #[test]
-    fn a_phone_that_just_scanned_the_code_always_attaches() {
-        assert!(may_attach(false, false, true, || false));
-        // Even from a PC the user had disconnected: scanning is asking for it.
-        assert!(may_attach(true, false, true, || false));
-    }
-
-    #[test]
-    fn a_disconnected_pc_accepts_nothing_by_itself() {
-        // Disconnect means disconnect. This held over the relay and not over the
-        // local network, so with automatic reconnection on, a phone reattached
-        // over Wi-Fi seconds after the user pressed Disconnect.
-        assert!(!may_attach(true, true, false, || false));
-        assert!(!may_attach(true, false, false, || false));
-        // Unless the user asked for that phone by name.
-        assert!(may_attach(true, false, false, || true));
-    }
-
-    #[test]
-    fn a_saved_phone_is_refused_when_automatic_reconnection_is_off() {
-        // The bug the user hit twice: this held over the relay and not over the
-        // local network, so the desktop reattached to the last phone on launch
-        // with the setting plainly turned off.
-        assert!(!may_attach(false, false, false, || false));
-    }
-
-    #[test]
-    fn a_saved_phone_attaches_when_the_user_asked_for_it() {
-        assert!(may_attach(false, false, false, || true));
-    }
-
-    #[test]
-    fn automatic_reconnection_lets_a_saved_phone_straight_in() {
-        assert!(may_attach(false, true, false, || false));
-    }
-
-    #[test]
-    fn the_allowance_is_not_spent_unless_it_is_needed() {
-        // It is a single-use permission; consuming it on a connection that was
-        // already allowed would silently refuse the next one.
-        let taken = Cell::new(false);
-        assert!(may_attach(false, true, false, || {
-            taken.set(true);
-            true
-        }));
-        assert!(!taken.get());
-        assert!(may_attach(false, false, true, || {
-            taken.set(true);
-            true
-        }));
-        assert!(!taken.get());
-    }
 }

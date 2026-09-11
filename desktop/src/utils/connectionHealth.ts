@@ -1,7 +1,10 @@
 import type { ConnectionState } from "../types";
 
-// Backend probes allow 3s idle + 6s response; leave room for timer and IPC scheduling.
-export const STALE_HEARTBEAT_MS = 12_000;
+// The backend probes every 15s and gives up on the phone after 90s of complete
+// silence. This window has to sit outside that, or the interface reports a
+// disconnection the backend never made -- which is how a perfectly live session
+// showed as dropped after one late pong.
+export const STALE_HEARTBEAT_MS = 100_000;
 export const FIRST_HEARTBEAT_GRACE_MS = 30_000;
 
 export interface ConnectionHealthSnapshot {

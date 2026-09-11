@@ -61,9 +61,24 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
   const twoFaMode = useSettingsStore((s) => s.twoFaModeEnabled);
   const setTwoFaMode = useSettingsStore((s) => s.setTwoFaMode);
   const lockTimeoutMinutes = useSettingsStore((s) => s.lockTimeoutMinutes);
+  const desktopNotifications = useSettingsStore((s) => s.desktopNotificationsEnabled);
+  const setDesktopNotifications = useSettingsStore((s) => s.setDesktopNotifications);
+  const [desktopNotificationsError, setDesktopNotificationsError] = useState<string | null>(null);
   const replaceSettings = useSettingsStore((s) => s.replace);
   const clearAll = useNotificationStore((s) => s.clear);
   const clearOlderThan = useNotificationStore((s) => s.clearOlderThan);
+
+  // Flipped on screen first so the switch never feels laggy, and put back if the
+  // backend refuses -- the popups are raised there, so it is what actually decides.
+  const toggleDesktopNotifications = () => {
+    const next = !desktopNotifications;
+    setDesktopNotifications(next);
+    setDesktopNotificationsError(null);
+    invoke("set_desktop_notifications", { on: next }).catch((error) => {
+      setDesktopNotifications(!next);
+      setDesktopNotificationsError(String(error));
+    });
+  };
 
   const refreshDiagnostics = () => {
     invoke<DiagnosticsSnapshot>("get_connection_diagnostics")
@@ -303,6 +318,28 @@ export default function SettingsPanel({ fullPage = false }: { fullPage?: boolean
 
       {fullPage && (
       <>
+      <div className="rounded-[32px] border border-border-subtle bg-bg-secondary/70 p-6 shadow-soft">
+        <div className="text-xs uppercase tracking-[0.22em] text-text-muted">
+          Desktop notifications
+        </div>
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
+          Show a Windows popup when a notification arrives from your phone. Turning this
+          off changes nothing else: messages still sync and still appear in your inbox
+          here, they just stop interrupting whatever is on screen.
+        </p>
+        <div className="mt-4">
+          <RuleRow
+            label="Tray popups"
+            value={desktopNotifications ? "On - popups appear as messages arrive" : "Off - inbox only, nothing pops up"}
+            active={desktopNotifications}
+            onClick={toggleDesktopNotifications}
+          />
+        </div>
+        {desktopNotificationsError && (
+          <p className="mt-3 text-xs text-[#9b4b3d]">{desktopNotificationsError}</p>
+        )}
+      </div>
+
       <div className="rounded-[32px] border border-border-subtle bg-bg-secondary/70 p-6 shadow-soft">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>

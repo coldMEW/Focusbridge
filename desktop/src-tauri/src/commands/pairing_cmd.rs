@@ -408,17 +408,26 @@ mod pairing_request_tests {
     fn a_fresh_code_opens_enrollment_for_a_phone_this_pc_may_not_know() {
         assert_eq!(
             pairing_request_effects(true, false),
-            PairingRequestEffects { resume: false, arm_enrollment: true }
+            PairingRequestEffects {
+                resume: false,
+                arm_enrollment: true
+            }
         );
         // Re-drawing a code that already exists must not re-open enrollment,
         // which would let a different handset replace the pinned one.
         assert_eq!(
             pairing_request_effects(true, true),
-            PairingRequestEffects { resume: false, arm_enrollment: false }
+            PairingRequestEffects {
+                resume: false,
+                arm_enrollment: false
+            }
         );
         assert_eq!(
             pairing_request_effects(false, false),
-            PairingRequestEffects { resume: false, arm_enrollment: false }
+            PairingRequestEffects {
+                resume: false,
+                arm_enrollment: false
+            }
         );
     }
 }

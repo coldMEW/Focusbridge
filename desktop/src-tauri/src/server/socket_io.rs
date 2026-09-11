@@ -8,6 +8,10 @@ use tokio_tungstenite::{tungstenite::Message, WebSocketStream};
 
 pub const MAX_PENDING_MESSAGES: usize = 64;
 pub const MAX_PENDING_BYTES: usize = 8 * 1024 * 1024;
+/// The largest record the protocol allows. A queue with less room than this is
+/// treated as full, so the decision to stop reading is never left to the size of
+/// whichever frame happens to arrive next.
+const LARGEST_RECORD: usize = 1024 * 1024;
 
 #[derive(Default)]
 pub struct PendingMessages {
@@ -37,6 +41,30 @@ impl PendingMessages {
         self.messages.clear();
         self.bytes = 0;
     }
+
+    /// True when nothing more may be queued.
+    ///
+    /// The caller stops *reading* the socket rather than pushing and failing, so
+    /// a burst becomes back-pressure instead of a dropped session. This is the
+    /// bug that actually disconnected people: a phone flushing its backlog after
+    /// connecting sends its held notifications at once, and more than
+    /// `MAX_PENDING_MESSAGES` of them arriving while one was being written to
+    /// the database ended the session with "pending websocket work limit
+    /// exceeded". Caught live, one second after a connection was established:
+    ///
+    /// ```text
+    /// notification received app=... stored=true
+    /// the phone session ended reason="pending websocket work limit exceeded"
+    /// ```
+    ///
+    /// The limit is a memory bound and stays exactly where it was. What changed
+    /// is what happens on reaching it: TCP stops being drained, the phone's
+    /// window closes, and it waits -- which is what a full queue is supposed to
+    /// mean. Nothing is dropped and nothing is lost.
+    pub fn is_full(&self) -> bool {
+        self.messages.len() >= MAX_PENDING_MESSAGES
+            || self.bytes + LARGEST_RECORD > MAX_PENDING_BYTES
+    }
 }
 
 /// Keep the actual socket reader and probes running while one application work item is pending.
@@ -61,13 +89,25 @@ where
                 Instant::now() < heartbeat.deadline(),
                 "phone heartbeat timed out"
             );
+            // Stop draining the socket while the queue is full, rather than
+            // reading a frame there is no room for and ending the session over
+            // it. The work item in flight is what empties the queue, and it is
+            // already being polled below.
             // Poll real reads even when the next work item completes immediately.
-            if let Some(frame) = socket.next().now_or_never() {
-                accept_during_work(frame, heartbeat, pending, &mut on_pong)?;
+            if !pending.is_full() {
+                if let Some(frame) = socket.next().now_or_never() {
+                    accept_during_work(frame, heartbeat, pending, &mut on_pong)?;
+                }
             }
             if let Some(token) = heartbeat.probe(Instant::now()) {
-                send_frame_before(socket, Message::Ping(token.into()), heartbeat.deadline()).await?;
+                send_frame_before(socket, Message::Ping(token.into()), heartbeat.deadline())
+                    .await?;
             }
+            // Asked again, deliberately: the read just above may have taken the
+            // last slot, and one pass round this loop can otherwise queue twice
+            // while having checked for room once. That is not a theoretical
+            // race -- the regression test for the burst caught it here.
+            let queue_has_room = !pending.is_full();
             tokio::select! {
                 biased;
                 _ = sleep_until(heartbeat.deadline()) => anyhow::bail!("phone heartbeat timed out"),
@@ -77,7 +117,7 @@ where
                     anyhow::ensure!(is_current(), "socket ownership changed");
                     return result;
                 }
-                frame = socket.next() => {
+                frame = socket.next(), if queue_has_room => {
                     anyhow::ensure!(is_current(), "socket ownership changed");
                     accept_during_work(frame, heartbeat, pending, &mut on_pong)?;
                 }
@@ -97,13 +137,18 @@ fn accept_during_work(
     pending: &mut PendingMessages,
     on_pong: &mut impl FnMut(),
 ) -> Result<()> {
-    match frame
+    let frame = frame
         .context("socket closed")?
-        .context("read websocket during work")?
-    {
+        .context("read websocket during work")?;
+    match frame {
         Message::Close(_) => anyhow::bail!("socket closed"),
         Message::Pong(payload) if heartbeat.acknowledge(&payload, Instant::now()) => on_pong(),
-        frame @ Message::Text(_) => pending.push_back(frame)?,
+        frame @ Message::Text(_) => {
+            // The phone can only have sent this itself, so work in flight cannot
+            // let a session lapse just because a pong is queued behind it.
+            heartbeat.mark_alive(Instant::now());
+            pending.push_back(frame)?
+        }
         // Tungstenite queues the reply to Ping; the next read or write flushes it.
         _ => (),
     }

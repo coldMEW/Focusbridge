@@ -64,13 +64,34 @@ pub async fn start(state: AppState, local_port: u16) {
         // everything except a phone holding the code it is currently showing.
         // This PC waits there whenever a pairing code is on screen, because a
         // phone that scans it has no other way to reach this machine.
-        let automatic =
+        let wants_to_dial =
             relay_api::auto_connect(&state.db_path).unwrap_or(true) || state.pairing_code_is_live();
+        // A phone that has just been turned away is still there, and dialing
+        // again reaches the same refusal. That mattered more than it looks:
+        // rejoining retires the pair at the relay, and the relay closes *both*
+        // sockets when it does, so the loop was not merely retrying -- it was
+        // kicking the phone off every thirty-five seconds, for as long as a
+        // pairing code was on screen. Observed doing exactly that, on the clock:
+        // thirty seconds waiting to be asked, five seconds of backoff, dial,
+        // refuse, repeat.
+        //
+        // So a refusal parks this PC until the user actually asks for
+        // something. Every way of asking clears it -- picking a saved phone,
+        // showing a fresh code, turning automatic reconnection on -- because
+        // they all go through `request_relay_connection`.
+        let automatic = wants_to_dial && !state.awaiting_request_after_refusal();
         if !automatic && !state.relay_connection_requested() {
             idle_once(
                 &state,
-                "waiting: automatic reconnection is off, so this PC joins the relay \
-                 only when you pick a saved phone or press refresh on the pairing screen",
+                if state.awaiting_request_after_refusal() {
+                    "waiting: a phone was turned away because automatic reconnection \
+                     is off, so this PC stays put rather than dialing back into the \
+                     same refusal. Pick the phone under previous connections, or \
+                     press refresh on the pairing screen"
+                } else {
+                    "waiting: automatic reconnection is off, so this PC joins the relay \
+                     only when you pick a saved phone or press refresh on the pairing screen"
+                },
             );
             state.await_relay_request().await;
             // Re-evaluate rather than falling through: the wait also returns on
@@ -197,7 +218,12 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
             // Outside a session there is no key that could open a binary frame;
             // stragglers from a retired session are simply dropped.
             Message::Binary(_) => continue,
-            Message::Close(_) => break,
+            Message::Close(frame) => {
+                if let Some(frame) = frame.as_ref() {
+                    info!(code = %frame.code, "the relay closed this socket");
+                }
+                break;
+            }
             _ => continue,
         }
     }
@@ -382,7 +408,19 @@ async fn bridge(
                                 bail!("the phone disconnected");
                             }
                         }
-                        Message::Close(_) => bail!("relay socket closed"),
+                        Message::Close(frame) => {
+                            // The code says who ended it. The relay retires a pair
+                            // with a specific code (1012 replaced, 4003 expired,
+                            // 4008 over budget, 1009 oversized); a phone that
+                            // simply left produces no close here at all. Without
+                            // this, "the phone disconnected" was the only thing
+                            // anyone could see, and it does not say why.
+                            let detail = frame
+                                .as_ref()
+                                .map(|frame| format!("{} {}", frame.code, frame.reason))
+                                .unwrap_or_else(|| "no code".into());
+                            bail!("relay closed this socket: {detail}")
+                        }
                         Message::Pong(_) | Message::Ping(_) | Message::Frame(_) => {}
                     }
                 }
@@ -390,11 +428,20 @@ async fn bridge(
                     let Some(frame) = outbound else { bail!("local server closed the session") };
                     match frame.context("read from the local server")? {
                         Message::Text(text) => {
-                            for sealed in session
+                            let sealed = session
                                 .seal_record(text.as_bytes())
-                                .map_err(|error| anyhow::anyhow!("seal failed: {error}"))?
-                            {
-                                socket.send(Message::Binary(sealed.into())).await.context("send relay frame")?;
+                                .map_err(|error| anyhow::anyhow!("seal failed: {error}"))?;
+                            // Sizes only, never content. A record that will not
+                            // fit, or a burst of frames the relay will not carry,
+                            // is invisible otherwise -- the session simply ends
+                            // and each side blames the other.
+                            tracing::debug!(
+                                bytes = text.len(),
+                                frames = sealed.len(),
+                                "sending a record to the phone"
+                            );
+                            for frame in sealed {
+                                socket.send(Message::Binary(frame.into())).await.context("send relay frame")?;
                             }
                         }
                         Message::Ping(payload) => {
@@ -548,13 +595,20 @@ mod tests {
 
     #[test]
     fn only_a_rejected_handshake_beside_a_live_code_opens_enrollment() {
-        let rejected = anyhow::anyhow!("relay handshake rejected: secure-session authentication failed");
+        let rejected =
+            anyhow::anyhow!("relay handshake rejected: secure-session authentication failed");
         assert!(should_enroll_after(&rejected, true));
         // No code on screen means nobody is pairing, so a rejection is a
         // rejection and the pinned phone stays pinned.
         assert!(!should_enroll_after(&rejected, false));
         // A timeout or a dropped socket says nothing about who the phone is.
-        assert!(!should_enroll_after(&anyhow::anyhow!("relay handshake timed out"), true));
-        assert!(!should_enroll_after(&anyhow::anyhow!("connection reset"), true));
+        assert!(!should_enroll_after(
+            &anyhow::anyhow!("relay handshake timed out"),
+            true
+        ));
+        assert!(!should_enroll_after(
+            &anyhow::anyhow!("connection reset"),
+            true
+        ));
     }
 }

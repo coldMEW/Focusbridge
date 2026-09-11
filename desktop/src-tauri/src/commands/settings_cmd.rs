@@ -13,6 +13,7 @@ pub struct SettingsSnapshot {
     pub blocked_keywords: Vec<String>,
     pub sync_mode: String,
     pub lock_timeout_minutes: u32,
+    pub desktop_notifications_enabled: bool,
 }
 
 #[tauri::command]
@@ -33,8 +34,40 @@ pub fn get_settings(state: tauri::State<'_, AppState>) -> SettingsSnapshot {
             .and_then(|value| value.parse().ok())
             .unwrap_or(0),
         sync_mode: "LOCAL".into(),
+        desktop_notifications_enabled: desktop_notifications_enabled(&state.db_path),
         ..Default::default()
     }
+}
+
+/// The stored answer, defaulting to on. Reading it in one place keeps startup
+/// and the settings screen from disagreeing about what an absent row means.
+pub fn desktop_notifications_enabled(db_path: &std::path::Path) -> bool {
+    store::get_setting(db_path, DESKTOP_NOTIFICATIONS_KEY)
+        .ok()
+        .flatten()
+        .map(|value| value != "false")
+        .unwrap_or(true)
+}
+
+pub const DESKTOP_NOTIFICATIONS_KEY: &str = "desktop_notifications_enabled";
+
+/// Turns the desktop popups on or off without touching what is synced or stored.
+///
+/// Messages still arrive and still land in the inbox; only the tray popup is
+/// suppressed, so turning this off cannot lose anything.
+#[tauri::command]
+pub fn set_desktop_notifications(
+    on: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    store::set_setting(
+        &state.db_path,
+        DESKTOP_NOTIFICATIONS_KEY,
+        if on { "true" } else { "false" },
+    )
+    .map_err(|e| e.to_string())?;
+    state.set_desktop_notifications_enabled(on);
+    Ok(())
 }
 
 #[tauri::command]

@@ -5,6 +5,7 @@ interface SettingsState extends Settings {
   activeFilter: FilterKind;
   setStudyMode: (on: boolean) => void;
   setTwoFaMode: (on: boolean) => void;
+  setDesktopNotifications: (on: boolean) => void;
   setFilter: (k: FilterKind) => void;
   setAppRuleLists: (rules: { packageName: string; muted: number; priority: number; studySafe: number }[]) => void;
   replace: (s: Partial<Settings>) => void;
@@ -21,9 +22,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   twoFaModeEnabled: false,
   syncMode: "LOCAL",
   lockTimeoutMinutes: 0,
+  // Popups are on unless the user turns them off.
+  desktopNotificationsEnabled: true,
   activeFilter: "ALL",
   setStudyMode: (on) => set({ studyModeEnabled: on }),
   setTwoFaMode: (on) => set({ twoFaModeEnabled: on }),
+  setDesktopNotifications: (on) => set({ desktopNotificationsEnabled: on }),
   setFilter: (k) => set({ activeFilter: k }),
   setAppRuleLists: (rules) =>
     set({

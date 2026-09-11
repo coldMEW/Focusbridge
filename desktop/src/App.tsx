@@ -44,6 +44,7 @@ interface NativeSettingsSnapshot {
   blocked_keywords?: string[];
   sync_mode?: "LOCAL" | "CLOUD";
   lock_timeout_minutes?: number;
+  desktop_notifications_enabled?: boolean;
 }
 
 interface DiagnosticsSnapshot {
@@ -75,16 +76,14 @@ export default function App() {
   const setConnectionState = useConnectionStore((s) => s.setState);
   const upsert = useNotificationStore((s) => s.upsert);
   const remove = useNotificationStore((s) => s.remove);
-  const replaceAll = useNotificationStore((s) => s.replaceAll);
+  const mergeHistory = useNotificationStore((s) => s.mergeHistory);
+  const clearNotificationView = useNotificationStore((s) => s.clear);
   const notifications = useNotificationStore((s) => s.items);
   const replaceSettings = useSettingsStore((s) => s.replace);
   const replaceAppRules = useAppRulesStore((s) => s.replaceAll);
   const setAppRuleLists = useSettingsStore((s) => s.setAppRuleLists);
 
   useEffect(() => {
-    invoke<NativeNotificationRow[]>("list_notifications", { limit: 150 })
-      .then((rows) => replaceAll(rows.map(fromNative)))
-      .catch((error) => console.warn("Unable to hydrate notifications", error));
     invoke<NativeSettingsSnapshot>("get_settings")
       .then((settings) =>
         replaceSettings({
@@ -100,6 +99,7 @@ export default function App() {
           blockedKeywords: settings.blocked_keywords ?? [],
           syncMode: settings.sync_mode ?? "LOCAL",
           lockTimeoutMinutes: settings.lock_timeout_minutes ?? 0,
+          desktopNotificationsEnabled: settings.desktop_notifications_enabled ?? true,
         }),
       )
       .catch((error) => console.warn("Unable to hydrate settings", error));
@@ -109,7 +109,30 @@ export default function App() {
         setAppRuleLists(rules);
       })
       .catch((error) => console.warn("Unable to hydrate app rules", error));
-  }, [replaceAll, replaceAppRules, replaceSettings, setAppRuleLists]);
+  }, [replaceAppRules, replaceSettings, setAppRuleLists]);
+
+  // The stored inbox arrives with the connection, not with the window.
+  //
+  // It used to be read once on mount, which is before the vault is unlocked --
+  // the backend refused it, the failure was only logged, and nothing ever asked
+  // again. So yesterday's notifications never came back: the list held only what
+  // arrived live in this session. Loading it on connect also keeps the empty
+  // screen the user asked to keep before a phone is attached.
+  useEffect(() => {
+    if (state !== "CONNECTED") {
+      clearNotificationView();
+      return;
+    }
+    let disposed = false;
+    invoke<NativeNotificationRow[]>("list_notifications", { limit: 150 })
+      .then((rows) => {
+        if (!disposed) mergeHistory(rows.map(fromNative));
+      })
+      .catch((error) => console.warn("Unable to load stored notifications", error));
+    return () => {
+      disposed = true;
+    };
+  }, [state, mergeHistory, clearNotificationView]);
 
   useEffect(() => {
     const unlisten = Promise.all([

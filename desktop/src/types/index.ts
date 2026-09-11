@@ -40,6 +40,7 @@ export interface Settings {
   twoFaModeEnabled: boolean;
   syncMode: "LOCAL" | "CLOUD";
   lockTimeoutMinutes: number;
+  desktopNotificationsEnabled: boolean;
 }
 
 export type FilterKind =

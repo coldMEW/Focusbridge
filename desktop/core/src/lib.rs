@@ -1,3 +1,4 @@
+pub mod attach;
 pub mod cert;
 pub mod handler;
 pub mod priority;

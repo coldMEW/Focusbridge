@@ -21,6 +21,10 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             "quit" => app.exit(0),
             "show" => {
                 if let Some(win) = app.get_webview_window("main") {
+                    // A minimized window is still "shown", so `show` alone did
+                    // nothing and Show Window looked broken whenever the app had
+                    // been minimized rather than hidden to the tray.
+                    let _ = win.unminimize();
                     let _ = win.show();
                     let _ = win.set_focus();
                 }

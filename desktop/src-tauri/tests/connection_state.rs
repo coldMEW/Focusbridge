@@ -32,14 +32,21 @@ use tokio::sync::mpsc;
 
 #[test]
 fn silent_peer_expires_without_waiting_for_android_application_heartbeat() {
+    // The desktop still gives up on its own schedule rather than waiting out
+    // Android's application heartbeat. What changed is the size of that
+    // schedule: it used to be six seconds, so the first probe a dozing handset
+    // answered late dropped a healthy session, while the phone had been told in
+    // AUTH_OK that it had a hundred and eighty.
     let now = tokio::time::Instant::now();
     let mut health = heartbeat::PeerHeartbeat::new(now);
     health.probe(now).unwrap();
-    assert!(health.deadline() <= now + std::time::Duration::from_secs(6));
+    assert_eq!(health.deadline(), now + heartbeat::SESSION_TIMEOUT);
+    assert!(health.deadline() < now + std::time::Duration::from_secs(180));
+    // A probe already in flight is not re-sent, and probing never buys time.
     assert!(health
         .probe(now + std::time::Duration::from_secs(3))
         .is_none());
-    assert!(health.deadline() <= now + std::time::Duration::from_secs(6));
+    assert_eq!(health.deadline(), now + heartbeat::SESSION_TIMEOUT);
 }
 
 #[test]
@@ -79,9 +86,13 @@ async fn websocket_control_probe_receives_matching_automatic_pong() {
     let mut phone = WebSocketStream::from_raw_socket(right, Role::Client, None).await;
     let mut health = heartbeat::PeerHeartbeat::new(tokio::time::Instant::now());
     let token = health.probe(tokio::time::Instant::now()).unwrap();
-    socket_io::send_frame_before(&mut server, Message::Ping(token.clone().into()), health.deadline())
-        .await
-        .unwrap();
+    socket_io::send_frame_before(
+        &mut server,
+        Message::Ping(token.clone().into()),
+        health.deadline(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         phone.next().await.unwrap().unwrap(),
         Message::Ping(token.clone().into())
@@ -267,10 +278,18 @@ async fn slow_work_services_actual_pongs_and_preserves_application_frame_order()
 
 #[test]
 fn expired_idle_heartbeat_cannot_be_revived_by_a_delayed_probe() {
+    // Sending a probe is not evidence of anything, so it must never buy the
+    // session time. This used to be enforced by refusing to probe at all past
+    // the deadline; it is now structural, because the deadline is measured from
+    // when the phone was last heard from and no probe touches that. The probe
+    // itself is free to be retried, which is what stops one late pong from
+    // ending a live session.
     let now = tokio::time::Instant::now();
     let mut health = heartbeat::PeerHeartbeat::new(now);
     let deadline = health.deadline();
-    assert!(health.probe(deadline).is_none());
+    health.probe(deadline);
+    assert_eq!(health.deadline(), deadline);
+    health.probe(deadline + std::time::Duration::from_secs(600));
     assert_eq!(health.deadline(), deadline);
 }
 
@@ -284,7 +303,9 @@ fn pending_application_frames_are_bounded_by_count_and_bytes() {
     assert!(pending.push_back(Message::Text("overflow".into())).is_err());
     pending.clear();
     pending
-        .push_back(Message::Text("x".repeat(socket_io::MAX_PENDING_BYTES).into()))
+        .push_back(Message::Text(
+            "x".repeat(socket_io::MAX_PENDING_BYTES).into(),
+        ))
         .unwrap();
     assert!(pending.push_back(Message::Text("x".into())).is_err());
     pending.pop_front();
@@ -323,7 +344,7 @@ async fn ownership_loss_drops_queued_frames_without_starting_work() {
     assert!(pending.pop_front().is_none());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn slow_batch_longer_than_response_timeout_keeps_servicing_control_frames() {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::{
@@ -345,13 +366,17 @@ async fn slow_batch_longer_than_response_timeout_keeps_servicing_control_frames(
     let mut health = heartbeat::PeerHeartbeat::new(tokio::time::Instant::now());
     let mut pending = socket_io::PendingMessages::default();
     let mut acknowledged = 0;
-    for _ in 0..24 {
+    // Each work item outlives a single probe, on the paused clock so the test
+    // stays instant. Real timers: the probe lapses at 20s and is retried, and
+    // the next scheduled probe falls due at 15s -- both inside one batch.
+    let batch = heartbeat::PROBE_TIMEOUT + std::time::Duration::from_secs(5);
+    for _ in 0..6 {
         socket_io::service_while(
             &mut server,
             &mut health,
             &mut pending,
             async {
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                tokio::time::sleep(batch).await;
                 Ok(())
             },
             || true,
@@ -370,18 +395,17 @@ async fn slow_batch_longer_than_response_timeout_keeps_servicing_control_frames(
     peer.abort();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn silent_peer_expires_while_application_work_is_pending() {
     use tokio_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
     let (left, _right) = tokio::io::duplex(1024);
     let mut server = WebSocketStream::from_raw_socket(left, Role::Server, None).await;
     let mut health = heartbeat::PeerHeartbeat::new(tokio::time::Instant::now());
-    // A nearly-expired pending probe keeps the test short without changing production timers.
-    health.probe(
-        tokio::time::Instant::now() - heartbeat::PROBE_TIMEOUT
-            + std::time::Duration::from_millis(50),
-    );
+    health.probe(tokio::time::Instant::now());
     let mut pending = socket_io::PendingMessages::default();
+    // Run the session up to the edge of its silence budget on the paused clock,
+    // so the test stays instant without shortening the production timers.
+    tokio::time::advance(heartbeat::SESSION_TIMEOUT - std::time::Duration::from_millis(50)).await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(7),
         socket_io::service_while(
@@ -399,4 +423,87 @@ async fn silent_peer_expires_while_application_work_is_pending() {
         .unwrap_err()
         .to_string()
         .contains("heartbeat timed out"));
+}
+
+#[test]
+fn a_full_queue_reports_itself_full_before_a_push_can_fail() {
+    use tokio_tungstenite::tungstenite::Message;
+    let mut pending = socket_io::PendingMessages::default();
+    assert!(!pending.is_full());
+    for _ in 0..socket_io::MAX_PENDING_MESSAGES {
+        pending.push_back(Message::Text("x".into())).unwrap();
+    }
+    // The caller asks this instead of pushing and failing, so it has to be true
+    // by the time a push would be refused.
+    assert!(pending.is_full());
+    pending.pop_front();
+    assert!(!pending.is_full());
+}
+
+#[tokio::test]
+async fn a_burst_larger_than_the_queue_is_back_pressured_rather_than_fatal() {
+    // The bug that actually disconnected people, caught live on the user's own
+    // machine. A phone that reconnects flushes the notifications it was holding,
+    // and the whole backlog arrives while one of them is being written to the
+    // database. Past MAX_PENDING_MESSAGES the queue refused the next frame and
+    // the session died with "pending websocket work limit exceeded" -- so the
+    // acknowledgements were never sent, the phone kept the notifications
+    // pending, and it flushed the identical burst on the next connection. The
+    // session died about a second after every authentication, for ever.
+    //
+    // Reading is what stops now. The frames wait in the socket, TCP closes the
+    // phone's window, and nothing is lost.
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::{
+        tungstenite::{protocol::Role, Message},
+        WebSocketStream,
+    };
+
+    let sent = socket_io::MAX_PENDING_MESSAGES + 40;
+    let (left, right) = tokio::io::duplex(256 * 1024);
+    let mut server = WebSocketStream::from_raw_socket(left, Role::Server, None).await;
+    let phone = tokio::spawn(async move {
+        let mut phone = WebSocketStream::from_raw_socket(right, Role::Client, None).await;
+        for index in 0..sent {
+            phone
+                .send(Message::Text(format!("notification {index}").into()))
+                .await
+                .unwrap();
+        }
+        phone.flush().await.unwrap();
+        // Hold the socket open; a close would end the read for a different reason.
+        std::future::pending::<()>().await;
+    });
+
+    let mut health = heartbeat::PeerHeartbeat::new(tokio::time::Instant::now());
+    let mut pending = socket_io::PendingMessages::default();
+    socket_io::service_while(
+        &mut server,
+        &mut health,
+        &mut pending,
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            Ok(())
+        },
+        || true,
+        || {},
+    )
+    .await
+    .expect("a burst larger than the queue must not end the session");
+
+    // Everything the phone sent is still there: some queued, the rest waiting in
+    // the socket because this side stopped reading.
+    let mut seen = 0;
+    while pending.pop_front().is_some() {
+        seen += 1;
+    }
+    while seen < sent {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), server.next()).await {
+            Ok(Some(Ok(Message::Text(_)))) => seen += 1,
+            Ok(Some(Ok(_))) => continue,
+            _ => break,
+        }
+    }
+    assert_eq!(seen, sent, "frames were lost instead of being held back");
+    phone.abort();
 }

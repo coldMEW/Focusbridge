@@ -1,6 +1,98 @@
 # FocusBridge Project Memory
 
-Last updated: 2026-09-06
+## Current research checkpoint 2026-09-08
+
+HEAD remains `cdf418f`; existing documentation edits are uncommitted. The older
+"Everything is pushed" section below describes an earlier checkpoint, not the
+current dirty documentation tree. No application code changed in this review.
+
+Read `apple/15-decision-and-execution-order.md` first for Apple expansion. Reports
+09-14 correct overly broad prior claims and provide source-linked component
+plans. Mac reception is a credible but untested port. iPhone Bluetooth access,
+EU accessory eligibility and optional hardware are separate proof gates; no
+worldwide full-parity guarantee is established.
+
+`apple/12-security-review-scope.md` documents two current source-traced issues:
+relay handshake failure can arm saved-phone identity replacement, and permanent
+device deletion leaves relay capabilities unrevoked. Source paths were rechecked
+on 2026-09-08. Proposed fixes and rollback requirements are documented; neither
+fix is implemented in this research step. This is not a whole-codebase audit.
+
+Last updated: 2026-09-07
+
+## Checkpoint 2026-09-07
+
+### Everything is pushed
+
+`main` is at `cdf418f`, clean tree, up to date with
+`origin/main` (`https://github.com/coldMEW/Focusbridge.git`). Nothing unpushed,
+no stashes.
+
+### android-ci is flaky, not broken
+
+`android-ci` fails on about half of all runs and it is **not** a code
+regression. The `android/` tree object is byte-identical across `e9a90d2`,
+`97fa4dd`, `9a61edb` and `cdf418f` (`dcc27a86…`) and that identical tree both
+passed and failed; the same holds for `546b942b…` and `6f5e1396…`. It fails in
+step 5 (`./gradlew test lint assembleDebug`) after 100–170s, so late — in `test`
+or `lint`.
+
+Ruled out locally: `./gradlew test lint assembleDebug` and
+`testDebugUnitTest --rerun-tasks` passed 11 consecutive times on this machine,
+6 idle and 5 under a 12-way CPU load.
+
+Not yet known: which task and which test. `gh` is not installed here and the
+Actions log API refuses unauthenticated requests, so the failing step's log has
+to come from `gh auth login` or the run page. Hypotheses and the proposed
+workflow change (`--stacktrace` plus uploading `app/build/reports` and
+`app/build/test-results` on failure) are in `docs/BLUEPRINT.md` §9.
+
+### Apple platform research (2026-09-07)
+
+Full research folder at `docs/apple/`. The findings that matter:
+
+- **A macOS desktop app is unblocked.** Same Tauri/Rust/React codebase, no
+  protocol change, and the Android app needs no changes to pair with a Mac. The
+  one real hazard is the macOS 15 local-network privacy permission, which has
+  documented failure modes (no prompt at all; local-network TCP failing when the
+  app is not in `/Applications`). Nothing mirrors Android notifications to a Mac
+  across networks today, so this is genuinely differentiated.
+- **An iPhone cannot read other apps' notifications** through any general API,
+  and ANCS consumption was removed from iOS and OS X in iOS 9, so a Mac cannot
+  be an ANCS client either.
+- **But Apple shipped a sanctioned path in 2026**: `AccessoryNotifications`
+  (iOS 26.5) plus `AccessoryTransportExtension` (iOS 26.2), built to satisfy the
+  EU Digital Markets Act. It forwards system-wide notifications — title,
+  subtitle, body, Apple Intelligence summary, source icon, attachments, actions,
+  priority attributes — to a third-party accessory, with a response channel for
+  dismissal and quick reply. That closes the notification-actions gap this
+  project lists as its one real shortfall against Phone Link. Transport ordering
+  is Bluetooth, then local network, then internet.
+- **The catch is regional.** Apple: develop and test in any region, but customer
+  installations work only on devices located in the EU with an EU Apple Account.
+  Complementarily, Apple's own iPhone Mirroring is still unavailable in the EU.
+  So the iPhone product is legal exactly where Apple's answer is absent, and
+  redundant where it is present. The author is in the US and cannot be their own
+  production user.
+- **The blocking unknown** is whether a Mac can register as an `ASAccessory`.
+  AccessorySetupKit discovers over Bluetooth, Wi-Fi SSID or Wi-Fi Aware; Wi-Fi
+  Aware has no macOS support, so BLE advertising is the only route and it is
+  untested. That single question decides the whole iPhone product — see
+  `docs/apple/08-risk-register.md` R-01.
+- **Cost:** Apple Developer Program $99/year, which breaks the free-first budget
+  rule by exactly one line item, plus a Mac (mandatory — nothing Apple can be
+  built from this Windows machine).
+
+Nothing in the folder was compiled or run; no Apple hardware was available. Every
+claim carries a [VERIFIED] / [REPORTED] / [UNVERIFIED] marker, and every
+[UNVERIFIED] appears in the risk register with the experiment that settles it.
+
+### Documentation
+
+`docs/BLUEPRINT.md` written: the whole repository in one document — layout, what
+each module owns, the connect/pair/relay flow, the full bug ledger with causes
+and fixes, the feature ledger with how each was built, build and test commands
+per component, CI, and what is not done. The README now points at it first.
 
 ## Cross-network networking checkpoint (2026-09-06)
 
@@ -133,9 +225,12 @@ describe untested behavior as working or promise absolute absence of bugs.
 Budget constraint (2026-09-05): free-first for all infrastructure and tools;
 prefer ongoing free tiers to expiring trials. No paid resources or auto-charging
 trials without explicit approval. See `docs/free-relay-options.md` for the
-current free relay comparison and account setup steps. No relay is deployed.
+current free relay comparison and account setup steps. (Superseded: the
+Cloudflare Worker relay in `relay-worker/` was deployed on 2026-09-06.)
 
-FocusBridge is a local-first attention filter. Android captures phone notifications, filters and prioritizes them, then sends them to a small Tauri desktop app for low-dopamine triage. The Rust relay is optional for later cloud/cross-network sync.
+FocusBridge is a local-first attention filter. Android captures phone notifications, filters and prioritizes them, then sends them to a small Tauri desktop app for low-dopamine triage. Cross-network sync goes through the Cloudflare Worker in `relay-worker/`; the
+self-hosted Actix relay in `relay/` is historical and is not used by either
+client.
 
 ## Current State
 
