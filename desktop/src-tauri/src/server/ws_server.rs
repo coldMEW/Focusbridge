@@ -2,7 +2,7 @@ use crate::db::store;
 use crate::desktop_notifications;
 use crate::server::heartbeat::PeerHeartbeat;
 use crate::server::socket_io::{send_frame_before, send_text, service_while, PendingMessages};
-use crate::state::AppState;
+use crate::state::{AppState, RECONNECT_GRACE_MS};
 use anyhow::{Context, Result};
 use focusbridge_core::attach::may_attach;
 use focusbridge_core::handler::{handle_envelope, IncomingDecision};
@@ -376,12 +376,14 @@ where
                 }
                 app.emit("focusbridge://connection", "CONNECTED")?;
                 if !notified_connected {
-                    if state.desktop_notifications_enabled() {
-                        desktop_notifications::show_connection_notification(&app, true);
-                    }
                     // Tracked whether or not it was shown, so turning the popups
                     // back on mid-session cannot produce a second "connected".
                     notified_connected = true;
+                    // Announced per connection, not per socket: a transport
+                    // replaced underneath a live connection is not news.
+                    if state.announce_connected() && state.desktop_notifications_enabled() {
+                        desktop_notifications::show_connection_notification(&app, true);
+                    }
                 }
             }
             IncomingDecision::AuthFailed(reason) => {
@@ -459,13 +461,38 @@ where
     let reason = result
         .as_ref()
         .err()
-        .map(|error| error.to_string())
+        // The whole chain: the outermost context alone ("read websocket
+        // message") hid every cause of a dropped session.
+        .map(|error| format!("{error:#}"))
         .unwrap_or_else(|| "socket closed".into());
     if state.clear_phone_sender_if_current_with_reason(&outbound_tx, &reason) {
         store::mark_pairings_disconnected(&state.db_path)?;
-        app.emit("focusbridge://connection", "DISCONNECTED")?;
-        if notified_connected && state.desktop_notifications_enabled() {
-            desktop_notifications::show_connection_notification(&app, false);
+        if notified_connected && !state.is_paused() {
+            // An established connection dropped without anyone asking. Show it
+            // as reconnecting and say nothing unless it stays down: Cloudflare
+            // cuts relay sockets now and then, and the apps are back within
+            // seconds.
+            let since = state.begin_reconnect_grace(now_ms() as i64);
+            app.emit("focusbridge://connection", "RECONNECTING")?;
+            let (state, app) = (state.clone(), app.clone());
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(RECONNECT_GRACE_MS as u64)).await;
+                if let Some(was_announced) = state.end_reconnect_grace(since) {
+                    info!("the phone did not come back within the reconnect grace");
+                    let _ = app.emit("focusbridge://connection", "DISCONNECTED");
+                    if was_announced && state.desktop_notifications_enabled() {
+                        desktop_notifications::show_connection_notification(&app, false);
+                    }
+                }
+            });
+        } else {
+            app.emit("focusbridge://connection", "DISCONNECTED")?;
+            if notified_connected
+                && state.announce_disconnected()
+                && state.desktop_notifications_enabled()
+            {
+                desktop_notifications::show_connection_notification(&app, false);
+            }
         }
     }
     timeout(Duration::from_secs(2), ws.close(None)).await.ok();

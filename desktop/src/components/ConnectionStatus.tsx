@@ -5,6 +5,7 @@ export default function ConnectionStatus() {
   const tone = {
     CONNECTED: "connection-led connected",
     CONNECTING: "connection-led connecting",
+    RECONNECTING: "connection-led connecting",
     DISCONNECTED: "connection-led disconnected",
     PAUSED: "connection-led paused",
   }[state];
@@ -12,6 +13,7 @@ export default function ConnectionStatus() {
   const label = {
     CONNECTED: deviceName ? `Connected - ${deviceName}` : "Connected",
     CONNECTING: "Connecting...",
+    RECONNECTING: "Reconnecting...",
     DISCONNECTED: "Disconnected",
     PAUSED: "Paused",
   }[state];

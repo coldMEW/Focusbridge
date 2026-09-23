@@ -15,6 +15,9 @@ pub struct DiagnosticsSnapshot {
     pub last_heartbeat_at: Option<i64>,
     pub last_auth_failure: Option<String>,
     pub last_disconnect_reason: Option<String>,
+    /// When a dropped connection began to be re-established, while it still
+    /// is; the interface shows "Reconnecting" rather than a disconnection.
+    pub reconnecting_since: Option<i64>,
 }
 
 #[tauri::command]
@@ -31,5 +34,11 @@ pub fn get_connection_diagnostics(state: tauri::State<'_, AppState>) -> Diagnost
         last_heartbeat_at: diagnostics.last_heartbeat_at,
         last_auth_failure: diagnostics.last_auth_failure,
         last_disconnect_reason: diagnostics.last_disconnect_reason,
+        reconnecting_since: state.reconnecting_since(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis() as i64)
+                .unwrap_or(0),
+        ),
     }
 }

@@ -125,7 +125,10 @@ export default function App() {
   // screen the user asked to keep before a phone is attached.
   useEffect(() => {
     if (state !== "CONNECTED") {
-      clearNotificationView();
+      // A connection being re-established keeps what is on screen. Clearing it
+      // emptied and refilled the whole inbox every time the relay dropped a
+      // socket for a few seconds.
+      if (state === "DISCONNECTED" || state === "PAUSED") clearNotificationView();
       return;
     }
     let disposed = false;

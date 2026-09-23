@@ -6,18 +6,30 @@ import type { ConnectionState } from "../types";
 // showed as dropped after one late pong.
 export const STALE_HEARTBEAT_MS = 100_000;
 export const FIRST_HEARTBEAT_GRACE_MS = 30_000;
+// Mirrors the backend's RECONNECT_GRACE_MS: a dropped connection is shown as
+// reconnecting, not lost, for this long. The backend decides when a drop counts
+// (never after a manual disconnect); this only bounds how long it is believed.
+export const RECONNECT_GRACE_MS = 90_000;
 
 export interface ConnectionHealthSnapshot {
   connected: boolean;
   lastHeartbeatAt?: number | null;
   connectedAt?: number | null;
+  reconnectingSince?: number | null;
 }
 
 export function desktopConnectionStateFromDiagnostics(
   diagnostics: ConnectionHealthSnapshot,
   now = Date.now(),
 ): ConnectionState {
-  if (!diagnostics.connected) return "DISCONNECTED";
+  if (!diagnostics.connected) {
+    // The relay's host cuts sockets now and then and both apps are back within
+    // seconds; saying "Disconnected" each time made a working link look broken.
+    const since = diagnostics.reconnectingSince;
+    return typeof since === "number" && now - since < RECONNECT_GRACE_MS
+      ? "RECONNECTING"
+      : "DISCONNECTED";
+  }
 
   if (typeof diagnostics.lastHeartbeatAt === "number") {
     return now - diagnostics.lastHeartbeatAt <= STALE_HEARTBEAT_MS

@@ -4,6 +4,8 @@ export type ConnectionState =
   | "DISCONNECTED"
   | "CONNECTING"
   | "CONNECTED"
+  // A connection the user made dropped underneath and is being re-established.
+  | "RECONNECTING"
   | "PAUSED";
 
 export interface Notification {

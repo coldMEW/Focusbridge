@@ -4,6 +4,24 @@ import { desktopConnectionStateFromDiagnostics } from "./connectionHealth";
 const now = Date.UTC(2026, 4, 5);
 
 describe("desktop connection health", () => {
+  it("shows a dropped connection as reconnecting while the backend says so", () => {
+    expect(desktopConnectionStateFromDiagnostics(
+      { connected: false, reconnectingSince: now - 5_000 }, now,
+    )).toBe("RECONNECTING");
+  });
+
+  it("stops believing in a reconnect once the grace has run out", () => {
+    expect(desktopConnectionStateFromDiagnostics(
+      { connected: false, reconnectingSince: now - 90_000 }, now,
+    )).toBe("DISCONNECTED");
+  });
+
+  it("a drop the backend does not call a reconnect is a disconnection", () => {
+    expect(desktopConnectionStateFromDiagnostics(
+      { connected: false, reconnectingSince: null }, now,
+    )).toBe("DISCONNECTED");
+  });
+
   it("keeps a connected state when a heartbeat is fresh", () => {
     expect(
       desktopConnectionStateFromDiagnostics(

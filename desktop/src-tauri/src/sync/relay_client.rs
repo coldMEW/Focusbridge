@@ -105,7 +105,9 @@ pub async fn start(state: AppState, local_port: u16) {
             Ok(false) => {}
             Err(error) => {
                 // Never log capabilities, key material, or notification content.
-                warn!(error = %error, "relay session ended");
+                // The whole chain, not just the outermost context: "read relay frame"
+                // alone says nothing about why the socket died.
+                warn!(error = format!("{error:#}"), "relay session ended");
             }
         }
         // A socket that held for minutes was a working connection, not a failed
@@ -208,7 +210,7 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
                     last_heard = Instant::now();
                     keepalive.reset();
                     if let Err(error) = outcome {
-                        warn!(error = %error, "relay phone session ended");
+                        warn!(error = format!("{error:#}"), "relay phone session ended");
                         // Turned away on purpose: reconnecting would arrive at the
                         // same refusal, and did, every few seconds. Wait to be
                         // asked for instead.

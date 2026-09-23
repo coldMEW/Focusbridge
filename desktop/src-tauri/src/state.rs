@@ -2,12 +2,24 @@ use crate::pairing::device_store::PairingSession;
 use focusbridge_core::cert::GeneratedCert;
 use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
 const PAIRING_SESSION_SETTING: &str = "pairing.session.v1";
 use tokio::sync::Notify;
+
+/// How long a dropped connection is shown as reconnecting before it is
+/// reported as lost.
+///
+/// The relay runs on Cloudflare, which cuts long-lived sockets now and then --
+/// edge and Durable Object restarts, both ends dropped in the same instant with
+/// no close frame -- and the two apps are back within seconds. Each of those
+/// used to raise a "disconnected" and a "connected" popup, empty the inbox and
+/// put the pairing screen up, so a working connection looked like it was
+/// failing every twenty minutes. Recovery takes 10-30s in practice; this leaves
+/// room for a slow radio as well.
+pub const RECONNECT_GRACE_MS: i64 = 90_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +56,13 @@ pub struct AppState {
     /// automatic connection, and cleared once a session is established.
     relay_requested: Arc<AtomicBool>,
     relay_wake: Arc<Notify>,
+    /// Whether the user has been told the phone is connected. Popups follow
+    /// this rather than individual sockets, so a transport that is replaced
+    /// underneath a live connection is not announced at all.
+    connection_announced: Arc<AtomicBool>,
+    /// When the connected phone's session dropped unexpectedly, in epoch ms, or
+    /// 0. Cleared when a phone gets in, or by a manual disconnect.
+    connection_lost_at: Arc<AtomicI64>,
     /// Set when the user asks for a phone while this PC may already be sitting
     /// at the relay; see `request_relay_rejoin`.
     relay_rejoin: Arc<AtomicBool>,
@@ -94,6 +113,8 @@ impl AppState {
             diagnostics: Arc::new(Mutex::new(ConnectionDiagnostics::default())),
             relay_requested: Arc::new(AtomicBool::new(false)),
             relay_wake: Arc::new(Notify::new()),
+            connection_announced: Arc::new(AtomicBool::new(false)),
+            connection_lost_at: Arc::new(AtomicI64::new(0)),
             relay_rejoin: Arc::new(AtomicBool::new(false)),
             relay_rejoin_wake: Arc::new(Notify::new()),
             relay_idle_reason: Arc::new(Mutex::new(None)),
@@ -299,6 +320,47 @@ impl AppState {
         self.relay_wake.notify_one();
     }
 
+    /// A phone got in. True when the user has not been told they are connected
+    /// yet -- the first connection, or the first after a loss was announced.
+    /// A reconnect inside the grace is the same connection carrying on.
+    pub fn announce_connected(&self) -> bool {
+        self.connection_lost_at.store(0, Ordering::Release);
+        !self.connection_announced.swap(true, Ordering::AcqRel)
+    }
+
+    /// The connected phone's session dropped without anyone asking for it.
+    /// Returns the moment it dropped, which identifies this loss.
+    pub fn begin_reconnect_grace(&self, now_ms: i64) -> i64 {
+        let since = now_ms.max(1);
+        self.connection_lost_at.store(since, Ordering::Release);
+        since
+    }
+
+    /// When the connection being re-established dropped, while it is still
+    /// within the grace and the user has not disconnected.
+    pub fn reconnecting_since(&self, now_ms: i64) -> Option<i64> {
+        let since = self.connection_lost_at.load(Ordering::Acquire);
+        (since != 0 && !self.is_paused() && now_ms - since < RECONNECT_GRACE_MS).then_some(since)
+    }
+
+    /// The grace for the loss that began at `since` ran out. `None` when the
+    /// phone came back, or a newer loss replaced this one; otherwise whether a
+    /// "connected" had been announced, and so whether to announce the loss.
+    pub fn end_reconnect_grace(&self, since: i64) -> Option<bool> {
+        self.connection_lost_at
+            .compare_exchange(since, 0, Ordering::AcqRel, Ordering::Acquire)
+            .ok()?;
+        Some(self.connection_announced.swap(false, Ordering::AcqRel))
+    }
+
+    /// A session ended with no grace (the PC is paused, or it never got as far
+    /// as authenticating). True when a "connected" is standing and should be
+    /// answered with a "disconnected".
+    pub fn announce_disconnected(&self) -> bool {
+        self.connection_lost_at.store(0, Ordering::Release);
+        self.connection_announced.swap(false, Ordering::AcqRel)
+    }
+
     /// Asks a PC already waiting at the relay to leave and join again.
     ///
     /// After turning a saved phone away this PC stays on its relay socket rather
@@ -477,6 +539,10 @@ impl AppState {
         // disconnect is precisely what rule two forbids.
         self.forget_approved_phone();
         self.relay_requested.store(false, Ordering::Release);
+        // The user did this; it is not a dropped connection to wait out, and
+        // it needs no popup to tell them what they just did.
+        self.connection_lost_at.store(0, Ordering::Release);
+        self.connection_announced.store(false, Ordering::Release);
         self.clear_phone_sender();
         self.update_diagnostics(|diag| {
             diag.connected = false;
@@ -746,6 +812,58 @@ mod connected_phone_tests {
             timeout(Duration::from_millis(50), state.relay_rejoin_requested()).await.is_err(),
             "a fresh join satisfies an outstanding request"
         );
+    }
+
+    #[test]
+    fn a_blip_inside_the_grace_is_never_announced() {
+        // Cloudflare cut both sockets and the phone was back in seconds: no
+        // "disconnected", no second "connected".
+        let state = state();
+        assert!(state.announce_connected(), "the first connection is announced");
+        let since = state.begin_reconnect_grace(1_000);
+        assert_eq!(state.reconnecting_since(1_000 + 5_000), Some(since));
+        assert!(!state.announce_connected(), "coming back is not news");
+        assert_eq!(state.end_reconnect_grace(since), None, "the grace was answered");
+        assert_eq!(state.reconnecting_since(1_000 + 6_000), None);
+    }
+
+    #[test]
+    fn a_loss_that_outlasts_the_grace_is_announced_once() {
+        let state = state();
+        state.announce_connected();
+        let since = state.begin_reconnect_grace(1_000);
+        assert_eq!(
+            state.reconnecting_since(1_000 + super::RECONNECT_GRACE_MS),
+            None,
+            "past the grace it is a loss, not a reconnect"
+        );
+        assert_eq!(state.end_reconnect_grace(since), Some(true), "announce it");
+        assert_eq!(state.end_reconnect_grace(since), None, "and only once");
+        assert!(state.announce_connected(), "coming back after that is announced");
+    }
+
+    #[test]
+    fn a_newer_loss_replaces_an_older_one() {
+        let state = state();
+        state.announce_connected();
+        let first = state.begin_reconnect_grace(1_000);
+        state.announce_connected();
+        let second = state.begin_reconnect_grace(2_000);
+        assert_eq!(state.end_reconnect_grace(first), None, "the old timer is stale");
+        assert_eq!(state.end_reconnect_grace(second), Some(true));
+    }
+
+    #[test]
+    fn a_manual_disconnect_is_not_a_reconnect() {
+        // Rule two: the user let the phone go, so there is nothing to wait for
+        // and nothing to show as reconnecting.
+        let state = state();
+        state.announce_connected();
+        let since = state.begin_reconnect_grace(1_000);
+        state.mark_manual_disconnect();
+        assert_eq!(state.reconnecting_since(1_500), None);
+        assert_eq!(state.end_reconnect_grace(since), None);
+        assert!(!state.announce_disconnected(), "no popup for the user's own act");
     }
 
     #[test]
