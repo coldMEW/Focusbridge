@@ -7,6 +7,7 @@ pub mod server;
 pub mod state;
 pub mod sync;
 pub mod tray;
+pub mod window;
 
 use crate::state::AppState;
 use anyhow::Context;
@@ -118,6 +119,13 @@ pub fn run() {
     install_crypto_provider();
 
     tauri::Builder::default()
+        // Registered first, so a second launch hands over before anything else
+        // starts: it asks this copy to come forward and then exits, instead of
+        // failing on the database lock with nothing on screen.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            info!("FocusBridge was launched again; showing the running window");
+            window::reveal_main_window(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -138,6 +146,7 @@ pub fn run() {
             );
             app.manage(app_state.clone());
             info!("focusbridge-desktop setup");
+            window::lock_down_webview(&handle);
             tray::menu::install(&handle)?;
             tauri::async_runtime::spawn(server::ws_server::start(
                 server::ws_server::WsServerConfig {

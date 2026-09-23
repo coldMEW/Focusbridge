@@ -1,6 +1,6 @@
 [package]
 name = "focusbridge-desktop"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 rust-version = "1.75"
 
@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
 tokio = { version = "1.36", features = ["full"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 tokio-rustls = "0.26"
@@ -53,6 +54,10 @@ open = "5.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
+# Pinned to the versions tauri-runtime-wry already links, so the WebView2
+# settings reached through `with_webview` are the same COM types, not a copy.
+webview2-com = "0.38"
+windows-core = "0.61"
 
 [dev-dependencies]
 tempfile = "3"
