@@ -99,6 +99,7 @@ pub async fn start(state: AppState, local_port: u16) {
             // automatic reconnection the user turned off.
             continue;
         }
+        let started = Instant::now();
         match attempt(&state, local_port).await {
             Ok(true) => backoff = MIN_BACKOFF,
             Ok(false) => {}
@@ -106,6 +107,11 @@ pub async fn start(state: AppState, local_port: u16) {
                 // Never log capabilities, key material, or notification content.
                 warn!(error = %error, "relay session ended");
             }
+        }
+        // A socket that held for minutes was a working connection, not a failed
+        // dial, and must not push the next attempt further away.
+        if started.elapsed() >= IDLE_TIMEOUT {
+            backoff = MIN_BACKOFF;
         }
         sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
@@ -148,16 +154,42 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
     // The request has been honoured; a later disconnect should not silently
     // reconnect when the user has asked for that not to happen.
     state.take_relay_request();
+    state.clear_relay_rejoin();
 
     // The relay reports the peer's presence on this same socket, so the desktop
     // can stay attached and wait rather than polling for the phone.
     let mut established = false;
+    // Waiting needs a keepalive as much as a session does. Without one, a PC
+    // sitting at the relay for a phone that is on the LAN heard nothing for
+    // 150s, called that a dead socket, tore it down and dialed again -- dozens of
+    // times a day, each one a rejoin the relay announces to the phone, and each
+    // one doubling the backoff, so that when the phone did need the relay (Wi-Fi
+    // dropped) this PC could be asleep for two minutes. The relay answers a ping
+    // without waking, and a pong is proof the socket is alive.
+    let mut keepalive = tokio::time::interval(KEEPALIVE);
+    keepalive.tick().await;
+    let mut last_heard = Instant::now();
     loop {
-        let frame = match timeout(IDLE_TIMEOUT, socket.next()).await {
-            Ok(Some(frame)) => frame.context("read relay frame")?,
-            Ok(None) => break,
-            Err(_) => bail!("relay socket idle timeout"),
+        let remaining = IDLE_TIMEOUT.saturating_sub(last_heard.elapsed());
+        let frame = tokio::select! {
+            _ = keepalive.tick() => {
+                socket
+                    .send(Message::Ping(Default::default()))
+                    .await
+                    .context("relay keepalive while waiting")?;
+                continue;
+            }
+            _ = state.relay_rejoin_requested() => {
+                info!("leaving the relay to join again, so the phone the user picked is asked afresh");
+                break;
+            }
+            next = timeout(remaining, socket.next()) => match next {
+                Ok(Some(frame)) => frame.context("read relay frame")?,
+                Ok(None) => break,
+                Err(_) => bail!("relay socket idle timeout"),
+            },
         };
+        last_heard = Instant::now();
         match frame {
             Message::Text(text) => match control_type(&text).as_deref() {
                 Some("relay.peer_ready") => {
@@ -170,23 +202,34 @@ async fn attempt(state: &AppState, local_port: u16) -> Result<bool> {
                         break;
                     };
                     // One phone session at a time; a new generation always restarts.
-                    if let Err(error) =
+                    let outcome =
                         run_session(state, &mut socket, &identity, &secrets, &pair, local_port)
-                            .await
-                    {
+                            .await;
+                    last_heard = Instant::now();
+                    keepalive.reset();
+                    if let Err(error) = outcome {
                         warn!(error = %error, "relay phone session ended");
                         // Turned away on purpose: reconnecting would arrive at the
                         // same refusal, and did, every few seconds. Wait to be
                         // asked for instead.
                         if state.take_known_phone_refusal() {
+                            // Stay on this socket. Leaving retires the pair at the
+                            // relay, which closes the phone's socket as well, and
+                            // the pairing screen's refresh made this PC leave and
+                            // rejoin every few seconds: both ends knocked each
+                            // other off for as long as the screen was up. Staying
+                            // keeps a code on screen working, and the phone, told
+                            // it was turned away, waits here to be asked. Only
+                            // the user picking it (`request_relay_rejoin`) makes
+                            // this PC join again.
                             idle_once(
                                 state,
                                 "a saved phone asked to reconnect and automatic \
-                                 reconnection is off; pick it under previous \
-                                 connections to let it in",
+                                 reconnection is off; staying at the relay without \
+                                 re-dialing. Pick it under previous connections to \
+                                 let it in",
                             );
-                            state.await_relay_request().await;
-                            break;
+                            continue;
                         }
                         // A phone whose key this PC has not pinned cannot get past
                         // the handshake, and until now nothing here noticed: the

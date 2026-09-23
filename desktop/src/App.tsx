@@ -53,6 +53,11 @@ interface DiagnosticsSnapshot {
   lastHeartbeatAt?: number | null;
 }
 
+// As much stored history as the backend will hand over in one read (it clamps
+// at 500). This was 150, so a busy inbox showed only its newest 150 rows after
+// a reconnect and looked as though everything older had not synced.
+const HISTORY_LIMIT = 500;
+
 function fromNative(row: NativeNotificationRow): Notification {
   return {
     id: row.id,
@@ -124,7 +129,7 @@ export default function App() {
       return;
     }
     let disposed = false;
-    invoke<NativeNotificationRow[]>("list_notifications", { limit: 150 })
+    invoke<NativeNotificationRow[]>("list_notifications", { limit: HISTORY_LIMIT })
       .then((rows) => {
         if (!disposed) mergeHistory(rows.map(fromNative));
       })

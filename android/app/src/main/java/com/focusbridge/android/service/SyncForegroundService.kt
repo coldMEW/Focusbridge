@@ -8,7 +8,10 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.service.notification.NotificationListenerService
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.focusbridge.android.R
@@ -19,6 +22,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -27,6 +33,9 @@ class SyncForegroundService : Service() {
     @Inject lateinit var syncEngine: SyncEngine
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
+    private var listenerWatchJob: Job? = null
+    private var listenerFailures = 0
+    private var lastListenerActionAt = 0L
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -50,6 +59,9 @@ class SyncForegroundService : Service() {
         if (monitorJob?.isActive != true) {
             monitorJob = scope.launch { syncEngine.maintainActivePairing() }
         }
+        if (listenerWatchJob?.isActive != true) {
+            listenerWatchJob = scope.launch { watchListener() }
+        }
         return START_STICKY
     }
 
@@ -57,6 +69,7 @@ class SyncForegroundService : Service() {
 
     override fun onDestroy() {
         monitorJob?.cancel()
+        listenerWatchJob?.cancel()
         releasePersistenceLocks()
         scope.cancel()
         super.onDestroy()
@@ -66,6 +79,43 @@ class SyncForegroundService : Service() {
         super.onTaskRemoved(rootIntent)
         val restart = Intent(applicationContext, SyncForegroundService::class.java)
         ContextCompat.startForegroundService(applicationContext, restart)
+    }
+
+    /**
+     * Keeps notification capture alive. This service is the part of the app
+     * that is always running, so it is the one place that can notice the
+     * listener has gone deaf -- see [ListenerWatchdog] for how that is judged.
+     */
+    private suspend fun watchListener() {
+        while (currentCoroutineContext().isActive) {
+            delay(ListenerWatchdog.CHECK_INTERVAL_MS)
+            runCatching { checkListener() }
+                .onFailure { Log.w(TAG, "notification listener check failed", it) }
+        }
+    }
+
+    private fun checkListener() {
+        // Without access there is nothing to repair; asking for it is the
+        // setup screen's job, not a background service's.
+        if (!NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)) {
+            listenerFailures = 0
+            return
+        }
+        val now = System.currentTimeMillis()
+        val verdict = NotificationService.connected?.inspect(now)
+            ?: ListenerWatchdog.Verdict.UNBOUND
+        if (verdict == ListenerWatchdog.Verdict.HEALTHY) {
+            // A quiet shade is not proof of recovery; a callback since the last
+            // repair is.
+            if (NotificationService.lastCallbackAt > lastListenerActionAt) listenerFailures = 0
+            return
+        }
+        listenerFailures += 1
+        lastListenerActionAt = now
+        if (ListenerWatchdog.shouldRebind(verdict)) {
+            Log.w(TAG, "notification listener is $verdict (check $listenerFailures); asking the system to rebind it")
+            NotificationListenerService.requestRebind(NotificationService.component(this))
+        }
     }
 
     private fun ensureChannel() {
@@ -120,5 +170,6 @@ class SyncForegroundService : Service() {
     companion object {
         const val CHANNEL_ID = "focusbridge_sync"
         const val NOTIFICATION_ID = 42
+        private const val TAG = "FocusBridgeSync"
     }
 }

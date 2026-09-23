@@ -379,6 +379,10 @@ pub fn request_device_reconnect(
         state.resume();
         state.allow_known_phone();
         state.request_relay_connection("the user asked to reconnect a saved phone");
+        // If this PC is already at the relay -- sitting there after turning the
+        // phone away -- it has to join again for the relay to put the two
+        // together.
+        state.request_relay_rejoin("the user asked to reconnect a saved phone");
         return Ok("Waiting for your phone to accept. It can be on any network.".into());
     }
     Err("Phone is offline. Open FocusBridge on Android, then scan the QR or paste the manual payload.".into())

@@ -18,6 +18,8 @@ class NotificationRepository @Inject constructor(
 
     suspend fun save(notification: NotificationEntity) = dao.upsert(notification)
 
+    suspend fun exists(id: String): Boolean = dao.exists(id)
+
     suspend fun markSent(id: String) = dao.setStatus(id, "SENT")
 
     suspend fun markBatchSent(batchId: String) = dao.setStatusByBatch(batchId, "SENT")

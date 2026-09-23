@@ -43,6 +43,17 @@ class SyncEngine @Inject constructor(
                     // has been told to scan again; wait for them to do it.
                 } else if (isManuallyDisconnected()) {
                     if (!client.isAwaitingPeer()) awaitApproval()
+                } else if (!client.isConnected() && client.isTurnedAway() &&
+                    pairings.active()?.supportsRelay() == true
+                ) {
+                    // Turned away by a PC that does not take a phone back on its
+                    // own. Dialing into the same refusal every fifteen seconds
+                    // knocked both ends off the relay each time; waiting there
+                    // lets the PC ask when the user picks this phone. Whether
+                    // being asked then prompts is still the switch's call. A
+                    // pairing with no relay keeps dialing, having no other way
+                    // to be let in.
+                    if (!client.isAwaitingPeer()) awaitApproval()
                 } else if (client.isConnected()) {
                     flushPending()
                 } else if (!client.isAwaitingPeer()) {
@@ -162,6 +173,14 @@ class SyncEngine @Inject constructor(
         // synced -- the worst kind of failure, because nothing looks wrong.
         if (!client.isConnected() && isManuallyDisconnected()) {
             Log.i(TAG, "holding a notification: this phone is disconnected")
+            return
+        }
+        // Turned away and waiting at the relay to be asked. Dialing out to
+        // deliver this would close that waiting socket and knock the PC off the
+        // relay too -- the same loop the wait exists to end. It stays pending
+        // and goes as soon as the user picks this phone on the PC.
+        if (!client.isConnected() && client.isTurnedAway() && pairings.active()?.supportsRelay() == true) {
+            Log.i(TAG, "holding a notification: the PC has not asked for this phone yet")
             return
         }
         if (!client.isConnected()) {

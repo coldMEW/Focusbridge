@@ -391,4 +391,63 @@ class SyncEngineTest {
             job.cancelAndJoin()
         }
     }
+
+    @Test fun aPhoneTurnedAwayWaitsAtTheRelayInsteadOfDialingBack() = runBlocking {
+        // The PC said no because its automatic reconnection is off. Dialing it
+        // again is the same refusal, and over the relay each attempt knocked
+        // both ends off. Wait there to be asked instead; no local address is
+        // dialed, and the switch still decides whether being asked prompts.
+        coEvery { config.get(SyncEngine.AUTO_RECONNECT_KEY) } returns "true"
+        every { client.isTurnedAway() } returns true
+        coEvery { pairings.active() } returns relayPairing
+        failEveryAttempt()
+
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            verify(atLeast = 1) {
+                client.connect(
+                    relayPairing,
+                    any(),
+                    any(),
+                    any(),
+                    useRelay = true,
+                    requireApproval = false,
+                    awaitingRequest = true,
+                )
+            }
+            verify(exactly = 0) {
+                client.connect(any(), any(), endpointOverride = any(), any(), useRelay = false, any(), any())
+            }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun aTurnedAwayPhoneWithNoRelayKeepsDialing() = runBlocking {
+        // Without a relay there is no way to be asked, so waiting would strand it.
+        every { client.isTurnedAway() } returns true
+        coEvery { pairings.active() } returns pairing
+
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { engine.maintainActivePairing() }
+        try {
+            verify(timeout = 2_000, atLeast = 1) {
+                client.connect(pairing, any(), endpointOverride = "wss://first", any(), any(), any(), any())
+            }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test fun aTurnedAwayPhoneHoldsNotificationsInsteadOfDialing() = runBlocking {
+        // A new notification must not make a waiting phone dial out: that closes
+        // its relay socket and knocks the PC off too. It stays pending.
+        every { client.isTurnedAway() } returns true
+        every { client.isConnected() } returns false
+        coEvery { pairings.active() } returns relayPairing
+
+        engine.send(sampleNotification)
+
+        verify(exactly = 0) { client.connect(any(), any(), any(), any(), any(), any(), any()) }
+        verify(exactly = 0) { client.send(any()) }
+    }
 }

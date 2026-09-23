@@ -245,3 +245,41 @@ fn legacy_database_migrates_without_hiding_existing_rules() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn the_same_message_under_another_id_is_recognised_as_a_copy() {
+    let db = TestDb::new();
+    let message = |id: &str, text: &str, at: i64| {
+        json!({
+            "id": id, "packageName": "com.whatsapp", "appName": "WhatsApp",
+            "sender": "Asha", "message": text, "timestamp": at,
+        })
+    };
+    store::upsert_notification(&db.path, &message("content:old-id", "See you at 6", 1_700_000_000_000)).unwrap();
+
+    // Re-sent by an older phone build under a new id: a copy.
+    assert_eq!(
+        store::equivalent_notification(&db.path, &message("content:new-id", "See you at 6", 1_700_000_000_000)).unwrap(),
+        Some("content:old-id".to_string())
+    );
+    // The row itself is not its own copy.
+    assert_eq!(
+        store::equivalent_notification(&db.path, &message("content:old-id", "See you at 6", 1_700_000_000_000)).unwrap(),
+        None
+    );
+    // A different message, or the same words sent at another time, is new.
+    assert_eq!(
+        store::equivalent_notification(&db.path, &message("content:x", "See you at 7", 1_700_000_000_000)).unwrap(),
+        None
+    );
+    assert_eq!(
+        store::equivalent_notification(&db.path, &message("content:y", "See you at 6", 1_700_000_060_000)).unwrap(),
+        None
+    );
+    // Masked notifications carry no text, and are never merged.
+    store::upsert_notification(&db.path, &message("masked-a", "", 1_700_000_000_000)).unwrap();
+    assert_eq!(
+        store::equivalent_notification(&db.path, &message("masked-b", "", 1_700_000_000_000)).unwrap(),
+        None
+    );
+}

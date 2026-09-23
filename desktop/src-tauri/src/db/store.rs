@@ -66,6 +66,31 @@ pub fn notification_exists(db_path: &Path, id: &str) -> Result<bool> {
     .context("check notification exists")
 }
 
+/// The id of a stored notification that is this one under another name, if any.
+///
+/// The phone names a notification by its content, but older builds folded the
+/// message's position in a conversation into that name, so WhatsApp re-sent
+/// every earlier message under a fresh id each time a new one arrived and the
+/// inbox filled with copies. The same app, sender, text and send time is the
+/// same message whatever it is called. An empty text is never matched: masked
+/// notifications all look alike and must not be merged into one.
+pub fn equivalent_notification(db_path: &Path, payload: &Value) -> Result<Option<String>> {
+    let row = notification_from_payload(payload);
+    if row.message.trim().is_empty() {
+        return Ok(None);
+    }
+    let conn = encrypted::open(db_path)?;
+    conn.query_row(
+        "SELECT id FROM notifications
+         WHERE package_name = ?1 AND sender = ?2 AND message = ?3 AND timestamp = ?4 AND id != ?5
+         LIMIT 1",
+        params![row.package_name, row.sender, row.message, row.timestamp, row.id],
+        |found| found.get(0),
+    )
+    .optional()
+    .context("look for an equivalent notification")
+}
+
 pub fn list_app_rules(db_path: &Path) -> Result<Vec<AppRuleRow>> {
     let conn = encrypted::open(db_path)?;
     let mut stmt = conn

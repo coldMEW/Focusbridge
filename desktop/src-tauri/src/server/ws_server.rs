@@ -550,6 +550,17 @@ fn apply_work_item(
     }
     match decision {
         IncomingDecision::StoreNotification(payload) => {
+            // Already here under another id: acknowledge it so the phone stops
+            // sending it, but store, show and pop up nothing a second time.
+            if let Some(incoming) = payload.get("id").and_then(|value| value.as_str()) {
+                if store::equivalent_notification(&state.db_path, &payload)?.is_some() {
+                    info!(
+                        app = %payload.get("packageName").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                        "notification received: a copy of one already stored, not added again"
+                    );
+                    return Ok(Some(incoming.to_string()));
+                }
+            }
             let existed = payload
                 .get("id")
                 .and_then(|value| value.as_str())

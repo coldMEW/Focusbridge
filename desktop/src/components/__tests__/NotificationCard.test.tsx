@@ -73,4 +73,49 @@ describe("NotificationCard", () => {
     );
     expect(screen.getByText("security")).toBeInTheDocument();
   });
+
+  it("shows a long message in full when asked, and folds it again", () => {
+    const long = "Line one of a long message.\n" + "x".repeat(300);
+    render(
+      <NotificationCard
+        notification={make({ message: long })}
+        onIgnore={() => {}}
+        onImportant={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: "Show full message" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const text = screen.getByText((_, el) => el?.tagName === "P" && el.textContent === long);
+    expect(text.className).toContain("line-clamp-2");
+    fireEvent.click(toggle);
+    expect(text.className).not.toContain("line-clamp-2");
+    expect(text.className).toContain("whitespace-pre-line");
+    fireEvent.click(screen.getByRole("button", { name: "Show less" }));
+    expect(text.className).toContain("line-clamp-2");
+  });
+
+  it("offers no toggle for a short message", () => {
+    render(
+      <NotificationCard
+        notification={make({ message: "Hey" })}
+        onIgnore={() => {}}
+        onImportant={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.queryByText("Show full message")).not.toBeInTheDocument();
+  });
+
+  it("does not expand a masked message around the peek", () => {
+    render(
+      <NotificationCard
+        notification={make({ contentHidden: true, message: "y".repeat(400) })}
+        onIgnore={() => {}}
+        onImportant={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(screen.queryByText("Show full message")).not.toBeInTheDocument();
+  });
 });

@@ -91,6 +91,18 @@ class WebSocketClient @Inject constructor(
      * socket down every retry tick, which would also lose the peer-arrival signal.
      */
     @Volatile private var relayAttached: Boolean = false
+
+    /**
+     * A PC turned this phone away because it does not take a phone back on its
+     * own (its "reconnect automatically" is off). Dialing it again reaches the
+     * same answer, and over the relay every attempt tears the pair down, so the
+     * PC and this phone knocked each other off every fifteen seconds for as long
+     * as its pairing screen was up. Turned away, this phone waits at the relay
+     * to be asked instead, exactly as it does after a manual disconnect.
+     */
+    @Volatile private var turnedAway: Boolean = false
+
+    fun isTurnedAway(): Boolean = turnedAway
     /**
      * Set when the relay reports a desktop while this phone is configured to ask
      * first. Holding the peer here rather than refusing it is what lets a PC
@@ -254,6 +266,7 @@ class WebSocketClient @Inject constructor(
                 }
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    logSocketEnd(serial, useRelay, "closing: code=$code reason=$reason")
                     finishConnection(
                         serial,
                         if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
@@ -261,6 +274,7 @@ class WebSocketClient @Inject constructor(
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    logSocketEnd(serial, useRelay, "closed: code=$code reason=$reason")
                     finishConnection(
                         serial,
                         if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
@@ -268,6 +282,11 @@ class WebSocketClient @Inject constructor(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    logSocketEnd(
+                        serial,
+                        useRelay,
+                        "failed: ${t.javaClass.simpleName}: ${t.message} http=${response?.code}",
+                    )
                     finishConnection(
                         serial,
                         if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
@@ -413,6 +432,7 @@ class WebSocketClient @Inject constructor(
     ) {
         when (envelope.type) {
             MessageType.AUTH_OK -> {
+                turnedAway = false
                 if (!relayTransport) secureReady = secureTransport
                 lastPongAt = System.currentTimeMillis()
                 // The consent given by scanning has been used now.
@@ -436,10 +456,30 @@ class WebSocketClient @Inject constructor(
                         "This PC no longer recognises this pairing. Scan the code on the PC again."
                     finishConnection(serial, ConnectionState.DISCONNECTED)
                 } else {
-                    finishConnection(
-                        serial,
-                        if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
-                    )
+                    turnedAway = true
+                    if (relayTransport) {
+                        // Keep the relay socket: leaving it retires the pair at the
+                        // relay and knocks the PC off too, and staying is how this
+                        // phone hears the PC ask for it. The finished session is
+                        // closed; the next announcement starts a fresh one.
+                        android.util.Log.i(
+                            "FocusBridgeSync",
+                            "the PC is not taking this phone back on its own; waiting at the relay to be asked",
+                        )
+                        pendingApproval = null
+                        closeSecureSession()
+                        secureReady = false
+                        stopHeartbeat(serial)
+                        updateState(
+                            serial,
+                            if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+                        )
+                    } else {
+                        finishConnection(
+                            serial,
+                            if (retryingOnFailure) ConnectionState.RETRYING else ConnectionState.DISCONNECTED,
+                        )
+                    }
                 }
             }
             MessageType.PONG -> {
@@ -551,6 +591,8 @@ class WebSocketClient @Inject constructor(
 
     @Synchronized
     fun acceptReconnectRequest() {
+        // The user asking to sync is a fresh attempt, not the old refusal.
+        turnedAway = false
         _pairingRejection.value = null
         setManualDisconnect(false)
         _reconnectRequest.value = null
@@ -579,6 +621,18 @@ class WebSocketClient @Inject constructor(
             setManualDisconnect(true)
             disconnect(showDisconnected = true)
         }
+    }
+
+    /**
+     * Says why a socket ended. The desktop can only say that the phone left;
+     * this is the phone's half of that line, so a drop on a stable network can
+     * be traced to its cause (a missed ping, a reset, the relay closing) rather
+     * than guessed at. Transport-level detail only: never content or keys.
+     */
+    private fun logSocketEnd(serial: Int, relay: Boolean, detail: String) {
+        if (serial != connectionSerial) return
+        val transport = if (relay) "relay" else "local network"
+        android.util.Log.w("FocusBridgeSync", "$transport socket ended while ${_state.value}: $detail")
     }
 
     @Synchronized
@@ -624,6 +678,7 @@ class WebSocketClient @Inject constructor(
                     }
                     val age = System.currentTimeMillis() - lastPongAt
                     if (age > HEARTBEAT_TIMEOUT_MS) {
+                        android.util.Log.w("FocusBridgeSync", "no pong from the desktop for ${age}ms; ending the session")
                         finishConnection(serial, ConnectionState.DISCONNECTED)
                         return@launch
                     }

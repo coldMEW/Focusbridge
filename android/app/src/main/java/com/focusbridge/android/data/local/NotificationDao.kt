@@ -20,6 +20,9 @@ interface NotificationDao {
     @Query("SELECT * FROM notifications WHERE status = 'PENDING' ORDER BY receivedAt ASC")
     suspend fun pending(): List<NotificationEntity>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM notifications WHERE id = :id)")
+    suspend fun exists(id: String): Boolean
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(notification: NotificationEntity)
 

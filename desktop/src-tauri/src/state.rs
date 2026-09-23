@@ -44,6 +44,10 @@ pub struct AppState {
     /// automatic connection, and cleared once a session is established.
     relay_requested: Arc<AtomicBool>,
     relay_wake: Arc<Notify>,
+    /// Set when the user asks for a phone while this PC may already be sitting
+    /// at the relay; see `request_relay_rejoin`.
+    relay_rejoin: Arc<AtomicBool>,
+    relay_rejoin_wake: Arc<Notify>,
     relay_idle_reason: Arc<Mutex<Option<String>>>,
     enrollment_armed: Arc<AtomicBool>,
     known_phone_allowed: Arc<AtomicBool>,
@@ -90,6 +94,8 @@ impl AppState {
             diagnostics: Arc::new(Mutex::new(ConnectionDiagnostics::default())),
             relay_requested: Arc::new(AtomicBool::new(false)),
             relay_wake: Arc::new(Notify::new()),
+            relay_rejoin: Arc::new(AtomicBool::new(false)),
+            relay_rejoin_wake: Arc::new(Notify::new()),
             relay_idle_reason: Arc::new(Mutex::new(None)),
             enrollment_armed: Arc::new(AtomicBool::new(false)),
             known_phone_allowed: Arc::new(AtomicBool::new(false)),
@@ -291,6 +297,35 @@ impl AppState {
         // testing the flag and parking was dropped, leaving it asleep forever
         // with the request still pending: pressing the button did nothing.
         self.relay_wake.notify_one();
+    }
+
+    /// Asks a PC already waiting at the relay to leave and join again.
+    ///
+    /// After turning a saved phone away this PC stays on its relay socket rather
+    /// than leaving: leaving retires the pair and knocks the phone off too, and
+    /// the pairing screen's refresh used to make it leave and rejoin every few
+    /// seconds. The relay only announces the two ends to each other when someone
+    /// joins, so when the user picks the phone, this is that join. Only a
+    /// deliberate act calls this; the pairing panel refreshing itself does not.
+    pub fn request_relay_rejoin(&self, reason: &str) {
+        tracing::info!(reason, "relay rejoin requested");
+        self.relay_rejoin.store(true, Ordering::Release);
+        self.relay_rejoin_wake.notify_one();
+    }
+
+    /// Resolves once a rejoin has been asked for, consuming the request.
+    pub async fn relay_rejoin_requested(&self) {
+        loop {
+            if self.relay_rejoin.swap(false, Ordering::AcqRel) {
+                return;
+            }
+            self.relay_rejoin_wake.notified().await;
+        }
+    }
+
+    /// A fresh join satisfies any rejoin that was asked for before it.
+    pub fn clear_relay_rejoin(&self) {
+        self.relay_rejoin.store(false, Ordering::Release);
     }
 
     pub fn take_relay_request(&self) -> bool {
@@ -681,6 +716,35 @@ mod connected_phone_tests {
         assert!(
             state.awaiting_request_after_refusal(),
             "only the user asking may lift this"
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_deliberate_request_makes_a_waiting_pc_rejoin() {
+        // The pairing panel refreshing asks for a relay connection every few
+        // seconds; that must not make a PC already at the relay leave and
+        // rejoin, which knocks the phone off. Picking the phone must.
+        use std::time::Duration;
+        use tokio::time::timeout;
+        let state = state();
+        state.request_relay_connection("a pairing code is on screen");
+        assert!(
+            timeout(Duration::from_millis(50), state.relay_rejoin_requested()).await.is_err(),
+            "a panel refresh is not a rejoin"
+        );
+        state.request_relay_rejoin("the user asked to reconnect a saved phone");
+        timeout(Duration::from_millis(500), state.relay_rejoin_requested())
+            .await
+            .expect("picking the phone rejoins");
+        assert!(
+            timeout(Duration::from_millis(50), state.relay_rejoin_requested()).await.is_err(),
+            "a request is consumed once"
+        );
+        state.request_relay_rejoin("again");
+        state.clear_relay_rejoin();
+        assert!(
+            timeout(Duration::from_millis(50), state.relay_rejoin_requested()).await.is_err(),
+            "a fresh join satisfies an outstanding request"
         );
     }
 

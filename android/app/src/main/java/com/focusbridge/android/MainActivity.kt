@@ -1612,6 +1612,10 @@ private fun ruleIcon(title: String) = when {
 
 @Composable
 private fun MobileNotificationRow(notification: NotificationEntity, onDelete: (() -> Unit)? = null) {
+    // Two lines by default, like the shade before it is pulled down; the whole
+    // message when asked for. The toggle only appears when there is more to see.
+    var expanded by remember(notification.id) { mutableStateOf(false) }
+    var overflowing by remember(notification.id) { mutableStateOf(false) }
     PanelCard {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
@@ -1632,10 +1636,22 @@ private fun MobileNotificationRow(notification: NotificationEntity, onDelete: ((
                 )
                 Text(
                     notification.message ?: "New notification",
-                    maxLines = 2,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
                     color = Color(0xFF61706A),
+                    onTextLayout = { layout -> if (!expanded) overflowing = layout.hasVisualOverflow },
                 )
+                if (overflowing || expanded) {
+                    Text(
+                        if (expanded) "Show less" else "Show full message",
+                        color = Color(0xFF2F6F5E),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clickable { expanded = !expanded },
+                    )
+                }
                 Text(notification.priority, color = Color(0xFF9A8F7C), style = MaterialTheme.typography.labelSmall)
             }
             if (onDelete != null) {

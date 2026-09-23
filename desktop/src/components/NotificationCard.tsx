@@ -3,6 +3,10 @@ import type { Notification } from "../types";
 import { relativeTime } from "../utils/time";
 import { priorityBadge, priorityLevel } from "../utils/priority";
 
+// Past this the two-line preview cannot hold the message. The exact cut-off
+// depends on the window width, so a line break also counts as long.
+const LONG_MESSAGE_CHARS = 140;
+
 interface Props {
   notification: Notification;
   index?: number;
@@ -19,12 +23,14 @@ export default function NotificationCard({
   onDelete,
 }: Props) {
   const [peekVisible, setPeekVisible] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const is2fa = notification.priority >= 100;
   const isImportant = notification.status === "IMPORTANT";
   const level = priorityLevel(notification.priority);
   const initials = notification.appName.slice(0, 2).toUpperCase();
   const shouldMask = notification.contentHidden && !peekVisible;
   const body = notification.message || "New notification";
+  const isLong = body.length > LONG_MESSAGE_CHARS || body.includes("\n");
 
   return (
     <article
@@ -47,7 +53,12 @@ export default function NotificationCard({
             <span className="font-semibold text-text-primary">{notification.appName}</span>
             <span>{notification.sender || "Unknown sender"}</span>
           </div>
-          <p className="mt-1 line-clamp-2 text-[15px] leading-6 text-text-primary">
+          <p
+            className={
+              "mt-1 text-[15px] leading-6 text-text-primary " +
+              (expanded && !shouldMask ? "whitespace-pre-line break-words" : "line-clamp-2")
+            }
+          >
             {shouldMask ? (
               <button
                 type="button"
@@ -68,6 +79,16 @@ export default function NotificationCard({
               </span>
             )}
           </p>
+          {!shouldMask && isLong && (
+            <button
+              type="button"
+              onClick={() => setExpanded((open) => !open)}
+              aria-expanded={expanded}
+              className="mt-1 text-xs font-semibold text-accent-study transition hover:underline"
+            >
+              {expanded ? "Show less" : "Show full message"}
+            </button>
+          )}
         </div>
         <span className="rounded-full border border-border-subtle bg-bg-primary/40 px-2.5 py-1 text-[11px] uppercase tracking-wide text-text-secondary">
           {priorityBadge(notification.priority)} {level}

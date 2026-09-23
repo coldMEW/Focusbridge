@@ -18,6 +18,9 @@ class NotificationProcessor @Inject constructor(
     private val config: ConfigRepository,
     private val appRules: AppRuleRepository,
 ) {
+    /** See [DefaultParser.signature]. */
+    fun signature(sbn: StatusBarNotification): String = defaultParser.signature(sbn)
+
     fun process(sbn: StatusBarNotification): List<NotificationEntity> {
         if (!filter.shouldProcess(sbn)) return emptyList()
         val rules = runBlocking { ProcessorRules.load(config) }
@@ -60,6 +63,13 @@ class NotificationProcessor @Inject constructor(
     }
 }
 
+/** One value standing for a notification's visible content; see [DefaultParser.signature]. */
+internal fun contentSignature(parts: List<String?>): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(parts.joinToString("\u0001") { it.orEmpty() }.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+        .take(32)
+
 internal fun stableNotificationId(
     key: String?,
     packageName: String,
@@ -67,6 +77,17 @@ internal fun stableNotificationId(
     tag: String?,
 ): String = key?.takeIf { it.isNotBlank() } ?: "$packageName:$id:${tag.orEmpty()}"
 
+/**
+ * Names a notification by what it says, so the same message is one row however
+ * many times Android hands it over.
+ *
+ * Deliberately independent of the Android key (Gmail posts one email under
+ * several keys) and of the message's position in a conversation. Position used
+ * to be part of it, and WhatsApp keeps only the last few messages of a chat in
+ * each notification, so every new message shifted the older ones down a place
+ * and re-sent all of them under new names: the desktop inbox filled with copies.
+ * The send time each chat message carries already tells two messages apart.
+ */
 @Suppress("UNUSED_PARAMETER")
 internal fun contentStableNotificationId(
     baseId: String,
@@ -78,7 +99,6 @@ internal fun contentStableNotificationId(
         parsed.sender.orEmpty().trim().lowercase(),
         parsed.message.orEmpty().trim().lowercase(),
         parsed.timestamp.toString(),
-        index.toString(),
     ).joinToString("|")
     val digest = MessageDigest.getInstance("SHA-256")
         .digest(canonical.toByteArray(Charsets.UTF_8))

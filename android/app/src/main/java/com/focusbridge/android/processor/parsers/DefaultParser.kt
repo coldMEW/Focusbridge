@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import com.focusbridge.android.processor.NotificationParser
 import com.focusbridge.android.processor.ParsedNotification
+import com.focusbridge.android.processor.contentSignature
 import javax.inject.Inject
 
 class DefaultParser @Inject constructor(
@@ -38,13 +39,45 @@ class DefaultParser @Inject constructor(
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+        // What the shade shows when the notification is pulled down: the big
+        // text, or an inbox-style list of lines. The one-line EXTRA_TEXT is only
+        // the collapsed preview, and was all that reached the desktop for an
+        // inbox-style notification.
+        val lines = inboxLines(extras)
         return ParsedNotification(
             appName = appName(sbn.packageName),
             packageName = sbn.packageName,
             sender = title,
-            message = bigText ?: text,
+            message = bigText?.takeIf { it.isNotBlank() } ?: lines ?: text,
             timestamp = sbn.postTime,
             contentHidden = title.isNullOrBlank() && text.isNullOrBlank() && bigText.isNullOrBlank(),
+        )
+    }
+
+    private fun inboxLines(extras: Bundle): String? =
+        extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.map { it.toString().trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() }
+            ?.joinToString("\n")
+
+    /**
+     * Everything the shade would show for this notification, in one value.
+     * Two posts under the same key with the same signature are one notification
+     * being updated -- a media player moving on a second, a download ticking --
+     * not a new message.
+     */
+    fun signature(sbn: StatusBarNotification): String {
+        val extras = sbn.notification.extras
+        val messages = parseMessageBundles(extras).map { "${it.sender}\u0002${it.text}\u0002${it.timestamp}" }
+        return contentSignature(
+            listOf(
+                sbn.packageName,
+                extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+                extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+                extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
+                inboxLines(extras),
+            ) + messages,
         )
     }
 
